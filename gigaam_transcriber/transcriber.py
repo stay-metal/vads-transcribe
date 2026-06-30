@@ -252,6 +252,7 @@ class GigaAMTranscriber:
         merge_same_speaker: bool = True,
         min_segment_gap: float = 0.5,
         glossary: bool = True,
+        emit_l0: bool = False,
     ) -> TranscriptionResult:
         """
         Универсальный метод транскрипции.
@@ -349,7 +350,16 @@ class GigaAMTranscriber:
         if output_path:
             save_result(result, output_path, output_format)
             logger.info(f"Результат сохранён: {output_path}")
-        
+            # L0 evidence-субстрат (opt-in): transcript.v1.jsonl + sha256 рядом с выводом.
+            if emit_l0:
+                try:
+                    from .l0 import build_l0, write_l0
+                    l0_path = Path(output_path).with_suffix(".v1.jsonl")
+                    write_l0(build_l0(result), l0_path)
+                    logger.info(f"L0 записан: {l0_path}")
+                except Exception as e:
+                    logger.warning(f"L0 пропущен: {e!r}")
+
         return result
     
     def _transcribe_audio(
