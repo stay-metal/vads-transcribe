@@ -252,6 +252,7 @@ class GigaAMTranscriber:
         merge_same_speaker: bool = True,
         min_segment_gap: float = 0.5,
         glossary: bool = True,
+        second_opinion: bool = False,
         emit_l0: bool = False,
     ) -> TranscriptionResult:
         """
@@ -327,20 +328,38 @@ class GigaAMTranscriber:
             # Обновляем полный текст
             result.text = " ".join(seg.text for seg in result.segments)
 
+        # Глоссарий-runtime грузим один раз — нужен и канонизации, и fusion/праймингу L2.
+        gloss_amap: dict = {}
+        gloss_suffixable: set = set()
+        if (glossary or second_opinion) and result.segments:
+            try:
+                from .glossary import load_runtime
+                gloss_amap, gloss_suffixable = load_runtime()
+            except Exception as e:
+                logger.warning(f"Глоссарий не загружен: {e!r}")
+
         # Канонизация имён/терминов (глоссарий) — детерминированный I1-safe пост-проход.
         # Меняет только курируемые алиасы (lint по russian/english_words), кириллица verbatim.
-        if glossary and result.segments:
+        if glossary and gloss_amap and result.segments:
+            from .glossary import apply_to_segments
+            n = apply_to_segments(result.segments, gloss_amap, gloss_suffixable)
+            if n:
+                result.text = " ".join(seg.text for seg in result.segments)
+                result.metadata["glossary_replacements"] = n
+                logger.info(f"Глоссарий: {n} замен")
+
+        # L2 «второе мнение» (opt-in): локальный Whisper перечитывает сегменты-кандидаты
+        # (с латиницей), fusion заменяет ТОЛЬКО латиницу/числа (кириллица verbatim, I1).
+        if second_opinion and result.segments:
             try:
-                from .glossary import apply_to_segments, load_runtime
-                amap, suffixable = load_runtime()
-                if amap:
-                    n = apply_to_segments(result.segments, amap, suffixable)
-                    if n:
-                        result.text = " ".join(seg.text for seg in result.segments)
-                        result.metadata["glossary_replacements"] = n
-                        logger.info(f"Глоссарий: {n} замен")
+                from .whisper_asr import apply_second_opinion
+                changed = apply_second_opinion(result, input_path, gloss_amap)
+                if changed:
+                    result.text = " ".join(seg.text for seg in result.segments)
+                    result.metadata["second_opinion_changed"] = changed
+                    logger.info(f"L2 «второе мнение»: {changed} сегментов исправлено")
             except Exception as e:
-                logger.warning(f"Глоссарий пропущен: {e!r}")
+                logger.warning(f"L2 пропущено: {e!r}")
 
         # Обновление метаданных
         processing_time = time.time() - start_time
