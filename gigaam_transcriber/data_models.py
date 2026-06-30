@@ -6,10 +6,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 import json
+import os
+import tempfile
 
 
 OutputFormat = Literal["txt", "json", "srt", "vtt"]
 DiarizationMode = Literal["none", "pyannote", "hybrid"]
+
+# Происхождение текста сегмента (по убыванию «сырья» модель→правки), как в custom l0.py.
+# Дефолт — "gigaam" (verbatim-вывод модели, инвариант I1). Прочие значения проставляют
+# будущие пост-проходы: глоссарий, L2 «второе мнение», voiceprint, ручная правка.
+DEFAULT_PROVENANCE = "gigaam"
+PROVENANCE_VALUES = ("gigaam", "glossary", "second-opinion", "voiceprint", "human")
+
+
+def merge_provenance(p1: str, p2: str) -> str:
+    """При слиянии сегментов побеждает более «обработанный» провенанс."""
+    order = {v: i for i, v in enumerate(PROVENANCE_VALUES)}
+    return p1 if order.get(p1, 0) >= order.get(p2, 0) else p2
 
 
 @dataclass
@@ -45,6 +59,9 @@ class TranscriptionSegment:
     end: float
     speaker: Optional[str] = None
     confidence: Optional[float] = None
+    speaker_confidence: Optional[float] = None
+    provenance: str = DEFAULT_PROVENANCE
+    flags: List[str] = field(default_factory=list)
     words: Optional[List[WordSegment]] = None
     
     @property
@@ -63,6 +80,12 @@ class TranscriptionSegment:
             result["speaker"] = self.speaker
         if self.confidence is not None:
             result["confidence"] = self.confidence
+        if self.speaker_confidence is not None:
+            result["speaker_confidence"] = self.speaker_confidence
+        if self.provenance and self.provenance != DEFAULT_PROVENANCE:
+            result["provenance"] = self.provenance
+        if self.flags:
+            result["flags"] = list(self.flags)
         if self.words:
             result["words"] = [w.to_dict() for w in self.words]
         return result
@@ -82,6 +105,9 @@ class TranscriptionSegment:
             end=data["end"],
             speaker=data.get("speaker"),
             confidence=data.get("confidence"),
+            speaker_confidence=data.get("speaker_confidence"),
+            provenance=data.get("provenance", DEFAULT_PROVENANCE),
+            flags=list(data.get("flags") or []),
             words=words,
         )
 
@@ -130,6 +156,24 @@ def _format_time_txt(seconds: float) -> str:
     if hours > 0:
         return f"{hours:02d}:{minutes:02d}:{full_secs:02d}:{centis:02d}"
     return f"{minutes:02d}:{full_secs:02d}:{centis:02d}"
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Атомарная запись текста: tmp-файл в той же папке + ``os.replace``.
+
+    Прерывание/краш посреди записи не оставляет полу-записанный артефакт (читатель
+    видит либо старую версию, либо целиком новую). Фундамент под manifest/L0/resume."""
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 @dataclass
@@ -285,9 +329,9 @@ class TranscriptionResult:
         else:  # txt
             content = self.to_txt()
         
-        # Сохранение
+        # Сохранение (атомарно: tmp + os.replace — краш-безопасно)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+        _atomic_write_text(path, content)
         
         return path
     

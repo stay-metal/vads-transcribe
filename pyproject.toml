@@ -56,6 +56,11 @@ diarization = [
     "speechbrain>=1.0.0",
     "scikit-learn>=1.3.0",
 ]
+second-opinion = [
+    # L2 «второе мнение» — локальный multilingual Whisper (CPU/int8), перечитывает
+    # сегменты-кандидаты (с латиницей), fusion правит латиницу/числа под I1.
+    "faster-whisper>=1.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
@@ -64,7 +69,7 @@ dev = [
     "ruff>=0.1.0",
 ]
 all = [
-    "gigaam-transcriber[diarization,dev]",
+    "gigaam-transcriber[diarization,second-opinion,dev]",
 ]
 
 [project.scripts]

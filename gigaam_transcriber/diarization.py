@@ -14,6 +14,7 @@ from typing import List, Optional, Tuple
 
 from .data_models import SpeakerSegment, TranscriptionSegment
 from .exceptions import DiarizationError, HFTokenMissingError
+from .speaker_mapping import assign_speakers_by_overlap
 
 logger = logging.getLogger(__name__)
 
@@ -315,54 +316,12 @@ class DiarizationManager:
         Returns:
             Сегменты транскрипции с присвоенными спикерами
         """
-        for trans_seg in transcription_segments:
-            # Находим midpoint сегмента транскрипции
-            midpoint = (trans_seg.start + trans_seg.end) / 2
-            
-            # Ищем спикера, говорившего в этот момент
-            speaker = self._find_speaker_at_time(midpoint, speaker_segments)
-            
-            # Если не нашли по midpoint, ищем по максимальному пересечению
-            if speaker is None:
-                speaker = self._find_speaker_by_overlap(trans_seg, speaker_segments)
-            
-            trans_seg.speaker = speaker
-        
-        return transcription_segments
-    
-    def _find_speaker_at_time(
-        self,
-        time: float,
-        speaker_segments: List[SpeakerSegment],
-    ) -> Optional[str]:
-        """Найти спикера, говорившего в указанный момент времени."""
-        for seg in speaker_segments:
-            if seg.start <= time <= seg.end:
-                return seg.speaker
-        return None
-    
-    def _find_speaker_by_overlap(
-        self,
-        trans_seg: TranscriptionSegment,
-        speaker_segments: List[SpeakerSegment],
-    ) -> Optional[str]:
-        """
-        Найти спикера с максимальным пересечением по времени.
-        """
-        max_overlap = 0
-        best_speaker = None
-        
-        for sp_seg in speaker_segments:
-            # Вычисляем пересечение
-            overlap_start = max(trans_seg.start, sp_seg.start)
-            overlap_end = min(trans_seg.end, sp_seg.end)
-            overlap = max(0, overlap_end - overlap_start)
-            
-            if overlap > max_overlap:
-                max_overlap = overlap
-                best_speaker = sp_seg.speaker
-        
-        return best_speaker
+        # Overlap-primary атрибуция (суммарное пересечение по спикеру) + nearest-фолбэк
+        # + speaker_confidence. Логика вынесена в чистый модуль speaker_mapping
+        # (общий шов: зовётся и из transcriber.py, и из cli_ui.py — долетает до UI).
+        return assign_speakers_by_overlap(
+            transcription_segments, speaker_segments, fill_nearest=True
+        )
 
 
 class HybridDiarization:
