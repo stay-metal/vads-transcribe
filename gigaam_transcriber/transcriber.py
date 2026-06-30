@@ -139,6 +139,20 @@ class GigaAMTranscriber:
             except ImportError:
                 return "cpu"
         return device
+
+    def _gpu_to_cpu_fallback(self, error: Exception) -> bool:
+        """Перенести GigaAM-модель на CPU после GPU-сбоя (OOM/RuntimeError на MPS/CUDA).
+
+        Возвращает успех. Дальнейший декод идёт на CPU (метится metadata.device_fallback).
+        Робастность на длинных встречах: лучше доделать на CPU, чем уронить весь прогон."""
+        try:
+            self.model.to("cpu")
+            self.device = "cpu"
+            self._device_fell_back = True
+            logger.info("Модель перенесена на CPU после GPU-сбоя")
+            return True
+        except Exception:
+            return False
     
     # =========================================================================
     # Свойства с ленивой загрузкой
@@ -294,23 +308,26 @@ class GigaAMTranscriber:
             )
             diarization = "none"
         
-        # Определяем тип файла и вызываем соответствующий метод
-        if self.audio_processor.is_video_file(input_path):
-            result = self._transcribe_video(
-                input_path,
-                diarization=diarization,
-                num_speakers=num_speakers,
-                min_speakers=min_speakers,
-                max_speakers=max_speakers,
-            )
-        else:
-            result = self._transcribe_audio(
-                input_path,
-                diarization=diarization,
-                num_speakers=num_speakers,
-                min_speakers=min_speakers,
-                max_speakers=max_speakers,
-            )
+        # Определяем тип файла и вызываем соответствующий метод (с постадийным таймингом)
+        from .stage_timing import StageTimer
+        timer = StageTimer()
+        with timer.measure("decode_diarize"):
+            if self.audio_processor.is_video_file(input_path):
+                result = self._transcribe_video(
+                    input_path,
+                    diarization=diarization,
+                    num_speakers=num_speakers,
+                    min_speakers=min_speakers,
+                    max_speakers=max_speakers,
+                )
+            else:
+                result = self._transcribe_audio(
+                    input_path,
+                    diarization=diarization,
+                    num_speakers=num_speakers,
+                    min_speakers=min_speakers,
+                    max_speakers=max_speakers,
+                )
 
         # Флаги риска качества текста (галлюцинации/лупы) — ПОМЕТКА, не правка (I1).
         # До сшивки (на сырых ASR-сегментах); merge объединит flags.
@@ -382,11 +399,17 @@ class GigaAMTranscriber:
                 logger.warning(f"L2 пропущено: {e!r}")
 
         # Обновление метаданных
+        from .versions import pipeline_versions
         processing_time = time.time() - start_time
         result.processing_time = processing_time
         result.language = language
         result.model_name = self.model_name
         result.metadata["source"] = str(input_path)
+        timer.add("total", processing_time)
+        result.metadata["stage_timing_sec"] = timer.as_dict()
+        result.metadata["layer_versions"] = pipeline_versions()
+        if getattr(self, "_device_fell_back", False):
+            result.metadata["device_fallback"] = self.device
         
         logger.info(
             f"Транскрипция завершена за {processing_time:.1f}с "
@@ -531,6 +554,13 @@ class GigaAMTranscriber:
         logger.debug(f"Транскрипция длинного аудио: {audio_path}")
         try:
             return self._transcribe_long_with_confidence(audio_path)
+        except (RuntimeError, MemoryError) as e:
+            # GPU OOM / сбой ядра на MPS/CUDA → перенести модель на CPU и повторить (#14).
+            if self.device in ("mps", "cuda") and self._gpu_to_cpu_fallback(e):
+                logger.warning(f"GPU-сбой декода ({e!r}); повтор на CPU")
+                return self._transcribe_long_with_confidence(audio_path)
+            logger.warning(f"Confidence-путь упал ({e!r}); fallback на transcribe_longform")
+            return self._transcribe_long_plain(audio_path)
         except Exception as e:
             logger.warning(
                 f"Per-chunk confidence недоступен ({e!r}); "
