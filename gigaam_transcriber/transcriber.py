@@ -273,6 +273,7 @@ class GigaAMTranscriber:
         preclean: bool = False,
         backend: str = "torch",
         onnx_int8: bool = False,
+        onnx_encoder: bool = False,
         word_timestamps: bool = False,
         resume: bool = False,
         manifest_path: Optional[Union[str, Path]] = None,
@@ -305,6 +306,7 @@ class GigaAMTranscriber:
         # БЕЗ per-chunk confidence — ONNX argmax не отдаёт logprob; текст argmax-идентичен torch).
         self._backend = backend
         self._onnx_int8 = onnx_int8
+        self._onnx_encoder = onnx_encoder
         self._word_timestamps = word_timestamps
 
         # Валидация
@@ -742,13 +744,17 @@ class GigaAMTranscriber:
         )
 
         wt = getattr(self, "_word_timestamps", False)
+        onnx_enc = self._get_onnx_encoder() if getattr(self, "_onnx_encoder", False) else None
         segments: List[TranscriptionSegment] = []
         idx = 0
         with torch.inference_mode():
             for wav_pad, wav_lens in dl:
                 wav_pad = wav_pad.to(model._device).to(model._dtype)
                 wav_lens = wav_lens.to(model._device)
-                encoded, encoded_len = model.forward(wav_pad, wav_lens)
+                if onnx_enc is not None:
+                    encoded, encoded_len = onnx_enc(model, wav_pad, wav_lens)
+                else:
+                    encoded, encoded_len = model.forward(wav_pad, wav_lens)
                 for text, conf, words in decode_with_confidence(
                     model, encoded, encoded_len, wav_lens, word_timestamps=wt
                 ):
@@ -819,6 +825,14 @@ class GigaAMTranscriber:
             )
             self._onnx = load_sessions(onnx_dir, version, "cpu")
         return self._onnx
+
+    def _get_onnx_encoder(self):
+        """Лениво: ONNX-энкодер split-device (encoder ORT-CPU + torch RNN-T голова → сохраняет
+        confidence). None при сбое → откат на torch model.forward."""
+        if not hasattr(self, "_onnx_enc"):
+            from .onnx_encoder import load_onnx_encoder
+            self._onnx_enc = load_onnx_encoder(self.model, self.model.cfg.model_name)
+        return self._onnx_enc
 
     def _transcribe_onnx(self, audio_path: Path) -> List[TranscriptionSegment]:
         """ONNX-декод (#13): segment_audio_file + infer_onnx. БЕЗ per-chunk confidence
