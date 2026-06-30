@@ -1,6 +1,20 @@
 """Тесты helper'ов L2 «второго мнения» (инкремент 18) — без загрузки модели."""
 
-from gigaam_transcriber.whisper_asr import _build_context, _prompt_text, is_candidate
+from gigaam_transcriber.whisper_asr import (
+    _build_context,
+    _cache_path,
+    _prompt_text,
+    is_candidate,
+)
+
+
+def test_cache_path_varies_with_lang_hint():
+    """Ключ L2-кэша зависит от lang_hint — иначе ru/en коллидируют по хэшу (bug_003)."""
+    ru = _cache_path(b"audio", "small", "", "ru")
+    en = _cache_path(b"audio", "small", "", "en")
+    assert ru != en
+    # одинаковые параметры → один и тот же ключ (кэш всё ещё попадает)
+    assert _cache_path(b"audio", "small", "", "ru") == ru
 
 
 def test_is_candidate_latin():

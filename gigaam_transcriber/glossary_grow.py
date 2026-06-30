@@ -21,8 +21,10 @@ from typing import Dict, List, Optional, Set, Tuple
 from ._paths import config_dir
 from .glossary import lint, load_en_words, load_ru_words
 
-# Лог корректировок L2 (для последующего harvest). gitignored (.cache/).
-CORRECTIONS_LOG = config_dir().parent / ".cache" / "corrections.jsonl"
+# Лог корректировок L2 (для последующего harvest). gitignored (.cache/). Резолвится
+# в момент вызова (config_dir() лениво читает GIGAAM_TRANSCRIBER_CONFIG) — не на import-time.
+def _corrections_log() -> Path:
+    return config_dir().parent / ".cache" / "corrections.jsonl"
 
 _LATIN = re.compile(r"[A-Za-z]")
 
@@ -58,22 +60,22 @@ def harvest_corrections(
     return {key: canon for key, canon in grown.items() if key not in blocked}
 
 
-def log_corrections(pairs: List[Tuple[str, str]], log_path: Path = CORRECTIONS_LOG) -> None:
+def log_corrections(pairs: List[Tuple[str, str]], log_path: Optional[Path] = None) -> None:
     """Дописать пары (мангл, каноника) в jsonl-лог (накопление между прогонами)."""
     if not pairs:
         return
-    log_path = Path(log_path)
+    log_path = Path(log_path) if log_path else _corrections_log()
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with open(log_path, "a", encoding="utf-8") as f:
         for mangle, canon in pairs:
             f.write(json.dumps({"mangle": mangle, "canon": canon}, ensure_ascii=False) + "\n")
 
 
-def harvest_log(log_path: Path = CORRECTIONS_LOG, min_count: int = 3) -> Dict[str, str]:
+def harvest_log(log_path: Optional[Path] = None, min_count: int = 3) -> Dict[str, str]:
     """Прочитать лог корректировок и свернуть в кандидаты-terms (под двухъязычным lint).
 
     Возвращает {мангл: каноника} для ручной курации — НЕ пишет glossary.json (precision-first)."""
-    log_path = Path(log_path)
+    log_path = Path(log_path) if log_path else _corrections_log()
     if not log_path.exists():
         return {}
     pairs: List[Tuple[str, str]] = []

@@ -202,3 +202,19 @@ class TestTranscriptionResult:
         sample_transcription_result.save(srt_path)
         assert srt_path.exists()
         assert "-->".encode() in srt_path.read_bytes()
+
+    def test_save_preserves_umask_permissions(self, sample_transcription_result, temp_dir):
+        """Атомарная запись не регрессит права до 0600 — honor-umask (bug_006). POSIX-only."""
+        import os
+        import stat
+        import sys
+
+        if sys.platform == "win32":
+            pytest.skip("POSIX-права неприменимы на Windows")
+        old = os.umask(0o022)
+        try:
+            p = temp_dir / "perm.txt"
+            sample_transcription_result.save(p)
+            assert stat.S_IMODE(p.stat().st_mode) == 0o644
+        finally:
+            os.umask(old)

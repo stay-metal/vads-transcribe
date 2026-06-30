@@ -165,6 +165,11 @@ def _atomic_write_text(path: Path, content: str) -> None:
     видит либо старую версию, либо целиком новую). Фундамент под manifest/L0/resume."""
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
     try:
+        # mkstemp создаёт файл с режимом 0600; os.replace сохранит его → выход станет
+        # нечитаем для group/other (регрессия vs write_text). Возвращаем honor-umask 0644.
+        umask = os.umask(0)
+        os.umask(umask)
+        os.chmod(tmp, 0o666 & ~umask)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(content)
         os.replace(tmp, path)

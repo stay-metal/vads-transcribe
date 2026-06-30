@@ -16,7 +16,7 @@ import time
 import warnings
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterator, List, Optional, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -112,7 +112,14 @@ class GigaAMTranscriber:
         self._model = None
         self._audio_processor = None
         self._diarization_manager = None
-        
+
+        # Состояние GPU→CPU fallback (#14, L1). _intended_device — устройство, на которое
+        # репарация вернёт модель на границе джобы после прошлого аварийного отката на CPU
+        # (тёплый singleton сервера переиспользуется между запросами). _device_fell_back —
+        # пометка ТЕКУЩЕЙ джобы (сбрасывается на входе каждой публичной джобы).
+        self._intended_device = self.device
+        self._device_fell_back = False
+
         # Создание директории кэша
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         
@@ -154,7 +161,36 @@ class GigaAMTranscriber:
             return True
         except Exception:
             return False
-    
+
+    def _repair_device(self) -> None:
+        """L1: репарация sticky GPU→CPU fallback на границе джобы.
+
+        ``_gpu_to_cpu_fallback`` после ОДНОГО GPU-сбоя защёлкивает модель на CPU
+        безвозвратно (``self.device='cpu'`` навсегда) → все последующие джобы тёплого
+        singleton идут ×10 медленнее до перезапуска процесса. Здесь — на входе каждой
+        публичной джобы — возвращаем модель на исходное устройство и сбрасываем
+        пер-джобовую пометку, чтобы один битый файл не деградировал весь сервер.
+        Если вернуть на GPU не удалось — остаёмся на CPU (лучше медленно, чем падать)."""
+        if getattr(self, "_device_fell_back", False) and self._intended_device in ("cuda", "mps"):
+            try:
+                if self._model is not None:
+                    self._model.to(self._intended_device)
+                self.device = self._intended_device
+                logger.info(
+                    f"Устройство восстановлено на {self._intended_device} "
+                    "после прошлого GPU→CPU fallback"
+                )
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except ImportError:
+                    pass
+            except Exception as e:
+                logger.warning(f"Репарация устройства не удалась, продолжаем на CPU: {e!r}")
+                return
+        self._device_fell_back = False
+
     # =========================================================================
     # Свойства с ленивой загрузкой
     # =========================================================================
@@ -254,6 +290,31 @@ class GigaAMTranscriber:
     # Основные методы транскрипции
     # =========================================================================
     
+    def _write_outputs(
+        self,
+        result: TranscriptionResult,
+        output_path: Optional[Union[str, Path]],
+        output_format: "OutputFormat",
+        emit_l0: bool,
+    ) -> None:
+        """Записать артефакты вывода (файл результата + opt-in L0-субстрат).
+
+        Единая точка для основного прогона и для resume-ветки — иначе resume=True
+        возвращал бы кэш в память, но не писал output_path/L0 на диск (нарушение контракта)."""
+        if not output_path:
+            return
+        save_result(result, output_path, output_format)
+        logger.info(f"Результат сохранён: {output_path}")
+        # L0 evidence-субстрат (opt-in): transcript.v1.jsonl + sha256 рядом с выводом.
+        if emit_l0:
+            try:
+                from .l0 import build_l0, write_l0
+                l0_path = Path(output_path).with_suffix(".v1.jsonl")
+                write_l0(build_l0(result), l0_path)
+                logger.info(f"L0 записан: {l0_path}")
+            except Exception as e:
+                logger.warning(f"L0 пропущен: {e!r}")
+
     def transcribe(
         self,
         input_path: Union[str, Path],
@@ -302,6 +363,9 @@ class GigaAMTranscriber:
         """
         input_path = Path(input_path)
         start_time = time.time()
+        # L1: вернуть модель на исходное устройство, если прошлая джоба упала на CPU
+        # (тёплый singleton сервера переиспользуется между запросами). No-op на CPU.
+        self._repair_device()
         # Бэкенд декода: "torch" (дефолт, даёт confidence) или "onnx" (CPU/CUDA, int8-ускорение,
         # БЕЗ per-chunk confidence — ONNX argmax не отдаёт logprob; текст argmax-идентичен torch).
         self._backend = backend
@@ -323,6 +387,9 @@ class GigaAMTranscriber:
             cached = resume_result(_mpath, input_path)
             if cached is not None:
                 logger.info(f"Resume: восстановлено из {_mpath} (ASR пропущен)")
+                # Resume пропускает только ASR — output_path/L0 всё равно нужно записать
+                # (кэш в памяти ≠ файл на диске; иначе тихо пропадает запрошенный артефакт).
+                self._write_outputs(cached, output_path, output_format, emit_l0)
                 return cached
 
         logger.info(f"Начало транскрипции: {input_path}")
@@ -339,16 +406,24 @@ class GigaAMTranscriber:
         from .stage_timing import StageTimer
         # Preclean-фильтр (#17, opt-in): highpass=80 убирает НЧ-гул, loudnorm выравнивает громкость.
         _PRECLEAN = "highpass=f=80,loudnorm=I=-23:LRA=7:TP=-2"
+        # Аудио для пост-проходов, читающих волну (voiceprint/second_opinion). Для видео —
+        # извлечённый wav (видео-контейнер torchaudio не декодирует); удаляется в конце.
+        post_audio: Path = input_path
+        _video_tmp: Optional[Path] = None
         timer = StageTimer()
         with timer.measure("decode_diarize"):
             if self.audio_processor.is_video_file(input_path):
-                result = self._transcribe_video(
+                result, _video_tmp = self._transcribe_video(
                     input_path,
+                    keep_temp_audio=True,
                     diarization=diarization,
+                    preclean_filter=(_PRECLEAN if preclean else None),
                     num_speakers=num_speakers,
                     min_speakers=min_speakers,
                     max_speakers=max_speakers,
                 )
+                if _video_tmp is not None:
+                    post_audio = _video_tmp
             else:
                 result = self._transcribe_audio(
                     input_path,
@@ -377,7 +452,7 @@ class GigaAMTranscriber:
                 if refs:
                     thr = gtheta if gtheta is not None else DEFAULT_THRESHOLD
                     named = name_diarized_speakers(
-                        result, input_path, refs, thr=thr, margin=gmargin
+                        result, post_audio, refs, thr=thr, margin=gmargin
                     )
                     if named:
                         result.metadata["voiceprint_named"] = named
@@ -420,13 +495,20 @@ class GigaAMTranscriber:
         if second_opinion and result.segments:
             try:
                 from .whisper_asr import apply_second_opinion
-                changed = apply_second_opinion(result, input_path, gloss_amap)
+                changed = apply_second_opinion(result, post_audio, gloss_amap)
                 if changed:
                     result.text = " ".join(seg.text for seg in result.segments)
                     result.metadata["second_opinion_changed"] = changed
                     logger.info(f"L2 «второе мнение»: {changed} сегментов исправлено")
             except Exception as e:
                 logger.warning(f"L2 пропущено: {e!r}")
+
+        # Извлечённый из видео wav больше не нужен (voiceprint/L2 прочитали его выше).
+        if _video_tmp is not None and Path(_video_tmp).exists():
+            try:
+                Path(_video_tmp).unlink()
+            except Exception:
+                pass
 
         # Обновление метаданных
         from .versions import pipeline_versions
@@ -449,19 +531,8 @@ class GigaAMTranscriber:
             f"({len(result.segments)} сегментов)"
         )
         
-        # Сохранение результата
-        if output_path:
-            save_result(result, output_path, output_format)
-            logger.info(f"Результат сохранён: {output_path}")
-            # L0 evidence-субстрат (opt-in): transcript.v1.jsonl + sha256 рядом с выводом.
-            if emit_l0:
-                try:
-                    from .l0 import build_l0, write_l0
-                    l0_path = Path(output_path).with_suffix(".v1.jsonl")
-                    write_l0(build_l0(result), l0_path)
-                    logger.info(f"L0 записан: {l0_path}")
-                except Exception as e:
-                    logger.warning(f"L0 пропущен: {e!r}")
+        # Сохранение результата (файл + opt-in L0) — общая точка с resume-веткой.
+        self._write_outputs(result, output_path, output_format, emit_l0)
 
         # manifest (#16): записать для будущего resume (даже если resume=False сейчас).
         if _mpath is not None:
@@ -502,11 +573,20 @@ class GigaAMTranscriber:
         tracks: Dict[str, str] = {}
         for f in files:
             stem = unicodedata.normalize("NFC", Path(f).stem)
-            raw = re.sub(r"^audio", "", stem)
+            raw = re.sub(r"^audio", "", stem, flags=re.IGNORECASE)  # и CamelCase 'Audio'
             raw = re.sub(r"\d+$", "", raw)  # хвостовые magic+index
             spaced = re.sub(r"(?<=[a-zа-яё])(?=[A-ZА-ЯЁ])", " ", raw).strip()
             name = people.get(spaced.lower(), spaced)
             if name:
+                # Коллизия (два «Ivan», или общий канон people) тихо теряла бы дорожку —
+                # предупреждаем и пропускаем, чтобы участник не исчез из транскрипта без следа.
+                if name in tracks:
+                    logger.warning(
+                        "Route A discover: коллизия имени %r — оставляю %s, пропускаю %s "
+                        "(переименуйте дорожку, иначе участник потеряется)",
+                        name, tracks[name], f,
+                    )
+                    continue
                 tracks[name] = f
         return tracks
 
@@ -517,6 +597,7 @@ class GigaAMTranscriber:
         output_format: OutputFormat = "txt",
         glossary: bool = True,
         min_segment_gap: float = 0.5,
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
     ) -> TranscriptionResult:
         """Route A (#21, библиотечный путь): дорожки участников → имена ground-truth.
 
@@ -524,17 +605,41 @@ class GigaAMTranscriber:
         ASR каждой дорожки → сегменты с speaker=имя (БЕЗ диаризации/voiceprint — имена точные).
         Сегменты сливаются на общий таймлайн (сортировка по времени) + сшивка одного спикера.
         Глоссарий применяется. UI (cli_ui, один wav) не задействован. De-bleed перекрытий —
-        точка роста (сейчас кросстолк может попасть на несколько дорожек)."""
+        точка роста (сейчас кросстолк может попасть на несколько дорожек).
+
+        ``progress_callback(current, total, name)`` (L4, opt-in) вызывается после каждой
+        дорожки (1..N) — единственный per-track сигнал для прогресс-бара сервера на основном
+        пути (внутренний цикл иначе не виден воркеру). Изоляция ошибок по дорожкам (L2):
+        битая/пустая/повреждённая дорожка не валит весь митинг — помечается в
+        ``metadata['failed_tracks']``, остальные выживают (частичный транскрипт)."""
         start_time = time.time()
+        # L1: репарация sticky GPU→CPU fallback на входе джобы (Route A — основной путь).
+        self._repair_device()
         self._backend = "torch"
         self._onnx_int8 = False
+        self._onnx_encoder = False  # иначе stale True из прошлого transcribe(onnx_encoder=True)
         self._word_timestamps = False
         all_segments: List[TranscriptionSegment] = []
-        for name, path in tracks.items():
-            r = self._transcribe_audio(Path(path), diarization="none")
+        failed_tracks: List[Dict[str, str]] = []
+        total = len(tracks)
+        for idx, (name, path) in enumerate(tracks.items()):
+            try:
+                r = self._transcribe_audio(Path(path), diarization="none")
+            except Exception as e:
+                # L2: изоляция ошибок по дорожкам — одна битая дорожка не должна валить весь
+                # митинг (в авто-ingest нет человека в цикле). Помечаем и продолжаем.
+                logger.warning(f"Route A: дорожка '{name}' пропущена ({e!r})")
+                failed_tracks.append(
+                    {"name": name, "path": str(path), "error": type(e).__name__}
+                )
+                if progress_callback is not None:
+                    progress_callback(idx + 1, total, name)
+                continue
             for seg in r.segments:
                 seg.speaker = name
             all_segments.extend(r.segments)
+            if progress_callback is not None:
+                progress_callback(idx + 1, total, name)
         all_segments.sort(key=lambda s: (s.start, s.end))
         merger = SegmentMerger(MergeConfig(max_gap=min_segment_gap))
         all_segments = merger.merge_same_speaker_segments(all_segments, max_gap=min_segment_gap)
@@ -548,6 +653,13 @@ class GigaAMTranscriber:
             processing_time=time.time() - start_time,
             metadata={"route": "A", "tracks": list(tracks.keys())},
         )
+        # L2: не-обработанные дорожки → частичный транскрипт + предупреждение в UI.
+        if failed_tracks:
+            result.metadata["failed_tracks"] = failed_tracks
+        # L3: device_fallback на основном пути Route A (зеркало single-file ветки, :442) —
+        # иначе GPU→CPU откат на главном сценарии невидим, и пользователь видит «зависание».
+        if getattr(self, "_device_fell_back", False):
+            result.metadata["device_fallback"] = self.device
         if glossary and result.segments:
             try:
                 from .glossary import apply_to_segments, load_runtime
@@ -643,8 +755,14 @@ class GigaAMTranscriber:
         video_path: Path,
         keep_temp_audio: bool = False,
         **kwargs,
-    ) -> TranscriptionResult:
-        """Внутренний метод транскрипции видео."""
+    ) -> Tuple[TranscriptionResult, Optional[Path]]:
+        """Внутренний метод транскрипции видео. Возвращает ``(result, temp_audio)``.
+
+        При ``keep_temp_audio=True`` извлечённый wav НЕ удаляется, а его путь
+        возвращается — пост-проходы ``transcribe()`` (voiceprint/second_opinion),
+        читающие волну через ``torchaudio.load``, используют его вместо видео-контейнера
+        (дефолтный бэкенд torchaudio видео не декодирует). Владение temp передаётся
+        вызывающему. Иначе temp удаляется и возвращается ``None``."""
         temp_audio = None
         try:
             # Извлечение аудио
@@ -653,16 +771,19 @@ class GigaAMTranscriber:
                 video_path,
                 normalize=True,
             )
-            
+
             # Транскрипция извлечённого аудио
             result = self._transcribe_audio(temp_audio, **kwargs)
             result.metadata["source"] = str(video_path)
             result.metadata["source_type"] = "video"
-            
-            return result
-            
+
+            if keep_temp_audio:
+                kept, temp_audio = temp_audio, None  # передаём владение вызывающему
+                return result, kept
+            return result, None
+
         finally:
-            if not keep_temp_audio and temp_audio and temp_audio.exists():
+            if temp_audio and temp_audio.exists():
                 try:
                     temp_audio.unlink()
                 except Exception:
@@ -1144,7 +1265,11 @@ class GigaAMTranscriber:
         }
     
     def preload(self) -> None:
-        """Предзагрузка модели для ускорения первого запроса."""
+        """Предзагрузка модели для ускорения первого запроса (тёплый старт воркера).
+
+        Фиксирует ``_intended_device`` — устройство, на которое L1-репарация вернёт
+        модель на границе джобы после возможного GPU→CPU fallback."""
+        self._intended_device = self.device
         _ = self.model
         logger.info("Модель предзагружена")
 

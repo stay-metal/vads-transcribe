@@ -80,8 +80,12 @@ def _prompt_text(context: Optional[str]) -> str:
     return text
 
 
-def _cache_path(audio_bytes: bytes, model: str, prompt: str = "") -> Path:
+def _cache_path(audio_bytes: bytes, model: str, prompt: str = "", lang_hint: str = "ru") -> Path:
     h = hashlib.sha256(audio_bytes + b"\x00" + model.encode("utf-8"))
+    # compute_type и lang_hint влияют на декод → часть ключа (иначе int8↔fp16 или ru↔en
+    # коллидируют по одному хэшу и возвращают чужой кэшированный результат).
+    h.update(b"\x00" + _COMPUTE_TYPE.encode("utf-8"))
+    h.update(b"\x00" + lang_hint.encode("utf-8"))
     if prompt:
         h.update(b"\x00" + prompt.encode("utf-8"))
     return CACHE_DIR / f"{h.hexdigest()}.json"
@@ -117,7 +121,7 @@ def second_opinion(
     (вызывающий fuse-ит только уверенные). Кэш по sha256(байты+модель+prompt)."""
     audio = np.ascontiguousarray(audio, dtype=np.float32)
     prompt = _prompt_text(context)
-    cache = _cache_path(audio.tobytes(), model, prompt)
+    cache = _cache_path(audio.tobytes(), model, prompt, lang_hint)
     if cache.exists():
         try:
             hit = json.loads(cache.read_text(encoding="utf-8"))
@@ -206,6 +210,9 @@ def apply_second_opinion(
         new_text, corrections = fuse_with_corrections(seg.text, res["text"], alias_map)
         if new_text != seg.text:
             seg.text = new_text
+            # Per-word тайминги устарели после fusion — сброс, чтобы seg.words не
+            # противоречил seg.text в JSON (потребитель откатится на seg.text).
+            seg.words = None
             seg.provenance = merge_provenance(seg.provenance, "second-opinion")
             changed += 1
         all_corrections.extend(corrections)

@@ -241,7 +241,80 @@ class TestGigaAMTranscriberMocked:
         audio_file.write_bytes(b"fake audio content")
         
         segments = mock_transcriber._transcribe_long(audio_file)
-        
+
         assert len(segments) == 2
         assert segments[0].text == "Первый сегмент"
         assert segments[1].text == "Второй сегмент"
+
+
+def _fake_result(text: str = "привет") -> TranscriptionResult:
+    return TranscriptionResult(
+        text=text,
+        segments=[TranscriptionSegment(text=text, start=0.0, end=1.0)],
+        duration=1.0,
+        language="ru",
+        model_name="fake",
+        processing_time=0.0,
+    )
+
+
+class TestTranscribePostProcessing:
+    """Регрессии пост-проходов transcribe() (resume/видео) — без загрузки модели."""
+
+    def test_resume_writes_output_file(self, monkeypatch, tmp_path):
+        """resume=True пропускает только ASR — output_path всё равно пишется на диск (bug_005)."""
+        import gigaam_transcriber.manifest as manifest_mod
+
+        t = GigaAMTranscriber(device="cpu")
+        audio = tmp_path / "a.wav"
+        audio.write_bytes(b"x")
+        monkeypatch.setattr(t, "_validate_input", lambda p: None)
+
+        cached = _fake_result("кэшированный текст")
+        monkeypatch.setattr(manifest_mod, "resume_result", lambda mp, ip: cached)
+
+        out = tmp_path / "out.txt"
+        res = t.transcribe(audio, output_path=out, resume=True)
+
+        assert res is cached
+        assert out.exists()
+        assert "кэшированный текст" in out.read_text(encoding="utf-8")
+
+    def test_video_threads_preclean_and_post_audio(self, monkeypatch, tmp_path):
+        """Видео: preclean доходит до ASR, а L2 читает извлечённый wav, не видео-контейнер;
+        temp убирается в конце (bug_001)."""
+        import gigaam_transcriber.whisper_asr as whisper_mod
+
+        t = GigaAMTranscriber(device="cpu")
+        video = tmp_path / "meeting.mp4"
+        video.write_bytes(b"x")
+        extracted = tmp_path / "extracted.wav"
+        extracted.write_bytes(b"x")
+
+        proc = MagicMock()
+        proc.is_video_file.return_value = True
+        proc.is_supported_file.return_value = True
+        proc.extract_audio_from_video.return_value = extracted
+        t._audio_processor = proc
+
+        captured = {}
+
+        def fake_audio(audio_path, diarization="none", preclean_filter=None, **kw):
+            captured["preclean_filter"] = preclean_filter
+            captured["asr_path"] = audio_path
+            return _fake_result()
+
+        monkeypatch.setattr(t, "_transcribe_audio", fake_audio)
+
+        def fake_l2(result, audio_path, amap, **kw):
+            captured["l2_path"] = audio_path
+            return 0
+
+        monkeypatch.setattr(whisper_mod, "apply_second_opinion", fake_l2)
+
+        t.transcribe(video, preclean=True, second_opinion=True, glossary=False)
+
+        assert captured["preclean_filter"]            # preclean дошёл до ASR на видео-ветке
+        assert captured["asr_path"] == extracted      # ASR — на извлечённом wav
+        assert captured["l2_path"] == extracted       # L2 читает wav, а не .mp4
+        assert not extracted.exists()                 # temp убран в конце

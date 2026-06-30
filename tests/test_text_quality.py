@@ -16,6 +16,13 @@ def test_hallucination_phrase():
     assert "hallucination_suspect" in detect_quality_flags("Субтитры сделал кто-то")
 
 
+def test_korrektor_noun_not_flagged():
+    """«корректор» как обычное слово не флагается; только полная фраза-титр (bug_004)."""
+    assert detect_quality_flags("Корректор закрыл задачу вчера") == []
+    assert detect_quality_flags("корректора уволили") == []
+    assert "hallucination_suspect" in detect_quality_flags("Корректор субтитров А. Семкин")
+
+
 def test_loop_detection():
     flags = detect_quality_flags("да да да да да да да да да да")
     assert "loop_suspect" in flags

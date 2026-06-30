@@ -87,8 +87,41 @@ def test_apply_to_segments_sets_provenance_only_when_changed():
     assert segs[1].provenance == "gigaam"  # не тронут
 
 
+def test_apply_to_segments_drops_stale_words_on_change():
+    """seg.words устаревают после замены текста → сбрасываются (рассинхрон в JSON, bug_009)."""
+    from gigaam_transcriber.data_models import WordSegment
+    changed = TranscriptionSegment(
+        text="наш харнес",
+        start=0,
+        end=1,
+        words=[
+            WordSegment(word="наш", start=0.0, end=0.4),
+            WordSegment(word="харнес", start=0.4, end=1.0),
+        ],
+    )
+    untouched = TranscriptionSegment(
+        text="без терминов",
+        start=1,
+        end=2,
+        words=[WordSegment(word="без", start=1.0, end=1.4)],
+    )
+    apply_to_segments([changed, untouched], {"харнес": "Harness"})
+    assert changed.text == "наш Harness"
+    assert changed.words is None              # сброшены — текст изменён
+    assert untouched.words is not None        # не тронут — тайминги сохранены
+
+
 def test_real_config_lints_clean():
     g = load_glossary()
     if g:
         v = lint(g, load_ru_words(), load_en_words())
         assert v == [], f"config/glossary.json нарушает lint (переписал бы слова): {v}"
+
+
+def test_load_glossary_honors_env_override_after_import(monkeypatch, tmp_path):
+    """config_dir() резолвится при ВЫЗОВЕ → env-override, выставленный после import, работает (bug_014)."""
+    cfg = tmp_path / "cfg"
+    cfg.mkdir()
+    (cfg / "glossary.json").write_text('{"terms": {"foo": "Bar"}}', encoding="utf-8")
+    monkeypatch.setenv("GIGAAM_TRANSCRIBER_CONFIG", str(cfg))
+    assert load_glossary() == {"terms": {"foo": "Bar"}}

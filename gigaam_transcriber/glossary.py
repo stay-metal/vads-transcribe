@@ -24,12 +24,10 @@ from typing import Dict, List, Optional, Set, Tuple
 from ._paths import config_dir
 from .data_models import TranscriptionSegment, merge_provenance
 
-GLOSSARY = config_dir() / "glossary.json"
-RU_WORDS = config_dir() / "russian_words.txt"
-EN_WORDS = config_dir() / "english_words.txt"
-
-
-def load_glossary(path: Path = GLOSSARY) -> dict:
+# Пути резолвятся в момент ВЫЗОВА (config_dir() читает GIGAAM_TRANSCRIBER_CONFIG лениво) —
+# иначе биндинг на import-time замораживал бы их, и env-override после import игнорировался.
+def load_glossary(path: Optional[Path] = None) -> dict:
+    path = path or (config_dir() / "glossary.json")
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
@@ -45,13 +43,13 @@ def _load_word_set(path: Path) -> Set[str]:
     }
 
 
-def load_ru_words(path: Path = RU_WORDS) -> Set[str]:
-    return _load_word_set(path)
+def load_ru_words(path: Optional[Path] = None) -> Set[str]:
+    return _load_word_set(path or (config_dir() / "russian_words.txt"))
 
 
-def load_en_words(path: Path = EN_WORDS) -> Set[str]:
+def load_en_words(path: Optional[Path] = None) -> Set[str]:
     """Настоящие английские слова — запрещены как term-алиас (страж I1, см. english_words.txt)."""
-    return _load_word_set(path)
+    return _load_word_set(path or (config_dir() / "english_words.txt"))
 
 
 def lint(glossary: dict, ru_words: Set[str], en_words: Optional[Set[str]] = None) -> List[str]:
@@ -214,6 +212,9 @@ def apply_to_segments(
         new_text, n = apply_glossary(seg.text, amap, suffixable)
         if n:
             seg.text = new_text
+            # Per-word тайминги устарели после замены текста — иначе seg.text/seg.words
+            # рассинхронизируются в JSON. Сброс: потребитель откатится на seg.text (to_dict).
+            seg.words = None
             seg.provenance = merge_provenance(seg.provenance, "glossary")
             total += n
     return total

@@ -74,9 +74,14 @@ def load_onnx_encoder(model, model_name: str, cache_dir=None, threads: int = 8) 
         cdir = Path(cache_dir) if cache_dir else _CACHE_DIR
         cdir.mkdir(parents=True, exist_ok=True)
         onnx_path = cdir / f"{model_name}_encoder.onnx"
-        if not onnx_path.exists():
+        # Маркер завершения (как в onnx_backend.ensure_onnx): краш посреди экспорта
+        # (OOM/SIGKILL/диск) не оставит .done → следующий запуск переэкспортирует, а не
+        # будет вечно падать на загрузке усечённого .onnx (bare exists() этого не ловит).
+        marker = cdir / f".{model_name}_encoder.done"
+        if not marker.exists():
             print(f"[onnx-encoder] экспорт {onnx_path} (один раз)...", file=sys.stderr, flush=True)
             model.to_onnx(str(cdir), dtype=torch.float32)
+            marker.write_text("ok")  # пишется ТОЛЬКО после успешного экспорта
         opts = rt.SessionOptions()
         opts.graph_optimization_level = rt.GraphOptimizationLevel.ORT_ENABLE_ALL
         opts.intra_op_num_threads = int(threads)
