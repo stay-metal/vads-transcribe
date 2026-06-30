@@ -274,6 +274,8 @@ class GigaAMTranscriber:
         backend: str = "torch",
         onnx_int8: bool = False,
         word_timestamps: bool = False,
+        resume: bool = False,
+        manifest_path: Optional[Union[str, Path]] = None,
         emit_l0: bool = False,
     ) -> TranscriptionResult:
         """
@@ -307,7 +309,20 @@ class GigaAMTranscriber:
 
         # Валидация
         self._validate_input(input_path)
-        
+
+        # Resume (#16): кэш результата по хэшу файла — повторный прогон пропускает ASR.
+        from .manifest import manifest_path_for, resume_result, write_manifest
+        _mpath = None
+        if manifest_path:
+            _mpath = Path(manifest_path)
+        elif output_path:
+            _mpath = manifest_path_for(output_path)
+        if resume and _mpath:
+            cached = resume_result(_mpath, input_path)
+            if cached is not None:
+                logger.info(f"Resume: восстановлено из {_mpath} (ASR пропущен)")
+                return cached
+
         logger.info(f"Начало транскрипции: {input_path}")
         
         # Graceful degradation для диаризации
@@ -445,6 +460,13 @@ class GigaAMTranscriber:
                     logger.info(f"L0 записан: {l0_path}")
                 except Exception as e:
                     logger.warning(f"L0 пропущен: {e!r}")
+
+        # manifest (#16): записать для будущего resume (даже если resume=False сейчас).
+        if _mpath is not None:
+            try:
+                write_manifest(result, input_path, _mpath)
+            except Exception as e:
+                logger.warning(f"manifest не записан: {e!r}")
 
         return result
     
