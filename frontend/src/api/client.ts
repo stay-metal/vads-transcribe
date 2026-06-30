@@ -1,0 +1,85 @@
+import type { Job, TranscriptResult, TrackRef, UploadResult } from "./types";
+
+// Глобальный обработчик истёкшей сессии (регистрируется в AuthProvider).
+let onUnauthorized: (() => void) | null = null;
+export function setUnauthorizedHandler(fn: (() => void) | null) {
+  onUnauthorized = fn;
+}
+
+// Same-origin: cookie HttpOnly+SameSite=Strict ходит автоматически (без CORS).
+async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, { credentials: "same-origin", ...init });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      detail = body.detail ?? detail;
+    } catch {
+      /* not json */
+    }
+    // 401 на любом /api (кроме самого me) → сброс сессии и редирект на логин.
+    if (res.status === 401 && !path.endsWith("/auth/me")) onUnauthorized?.();
+    throw new ApiError(res.status, detail);
+  }
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
+export class ApiError extends Error {
+  constructor(public status: number, message: string) {
+    super(message);
+  }
+}
+
+export const api = {
+  async login(username: string, password: string): Promise<{ user: string }> {
+    const form = new URLSearchParams({ username, password });
+    return req("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form,
+    });
+  },
+  logout: () => req<void>("/api/auth/logout", { method: "POST" }),
+  me: () => req<{ user: string }>("/api/auth/me"),
+
+  upload(files: File[]): Promise<UploadResult> {
+    const fd = new FormData();
+    files.forEach((f) => fd.append("files", f));
+    return req("/api/uploads", { method: "POST", body: fd });
+  },
+
+  discoverTracks: (recId: string) =>
+    req<{ recording_id: string; kind: string; tracks: TrackRef[] }>(
+      `/api/recordings/${recId}/discover-tracks`,
+    ),
+  confirmTracks: (recId: string, tracks: TrackRef[]) =>
+    req<{ recording_id: string; tracks: TrackRef[] }>(
+      `/api/recordings/${recId}/discover-tracks`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tracks }),
+      },
+    ),
+
+  submitJob: (body: Record<string, unknown>) =>
+    req<{ job_id: string; state: string; mode: string }>("/api/jobs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  listJobs: () => req<{ jobs: Job[] }>("/api/jobs"),
+  getJob: (id: string) => req<Job>(`/api/jobs/${id}`),
+  cancelJob: (id: string) => req<unknown>(`/api/jobs/${id}/cancel`, { method: "POST" }),
+  result: (id: string) => req<TranscriptResult>(`/api/jobs/${id}/result`),
+  putSpeakers: (id: string, edits: Record<string, string>) =>
+    req<unknown>(`/api/jobs/${id}/speakers`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ edits }),
+    }),
+  audioUrl: (id: string) => `/api/jobs/${id}/audio`,
+  downloadUrl: (id: string, format: string) =>
+    `/api/jobs/${id}/download?format=${format}`,
+};

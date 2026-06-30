@@ -61,6 +61,17 @@ second-opinion = [
     # сегменты-кандидаты (с латиницей), fusion правит латиницу/числа под I1.
     "faster-whisper>=1.0",
 ]
+server = [
+    # Web-сервер (M2+): FastAPI api + Huey 2-очереди + secure-by-default auth.
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "huey>=2.5",
+    "itsdangerous>=2.1",
+    "bcrypt>=4.1",
+    "python-multipart>=0.0.9",
+    "cryptography>=42",
+    "yadisk>=3.4.1",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
@@ -73,6 +84,11 @@ all = [
 ]
 
 [project.scripts]
+# Единый CLI (M1) — рекомендуемая точка входа.
+dialogscribe = "gigaam_transcriber.dialogscribe_cli:main"
+# gpu-воркер с boot-guard L5 (M2).
+dialogscribe-gpu-worker = "gigaam_transcriber.server.run_gpu_worker:main"
+# Легаси-точки — алиасы на один релиз, затем будут убраны.
 gigaam-transcribe = "gigaam_transcriber.cli:main"
 gigaam-batch = "gigaam_transcriber.cli:batch_main"
 gigaam-ui = "gigaam_transcriber.cli_ui:main"

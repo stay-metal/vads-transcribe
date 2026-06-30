@@ -149,3 +149,8 @@ cython_debug/
 
 # pyro
 *.pyro
+
+# Frontend (M4) build artifacts
+frontend/node_modules/
+frontend/dist/
+gigaam_transcriber/server/static/

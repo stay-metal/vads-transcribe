@@ -88,10 +88,14 @@ class GigaAMTranscriber:
         cache_dir: Optional[Path] = None,
         verbose: bool = False,
         fp16_encoder: bool = True,
+        diar_device: Optional[str] = None,
+        embedding_batch_size: Optional[int] = None,
+        segmentation_batch_size: Optional[int] = None,
+        embedding_backend: str = "torch",
     ):
         """
         Инициализация транскрибера.
-        
+
         Args:
             model_name: Имя модели GigaAM ("v3_e2e_rnnt", "v3_e2e_ctc", и т.д.)
             device: Устройство ("auto", "cuda", "cpu")
@@ -99,6 +103,12 @@ class GigaAMTranscriber:
             cache_dir: Директория для кэша
             verbose: Подробный вывод
             fp16_encoder: Использовать FP16 для энкодера (быстрее на GPU)
+            diar_device: Отдельное устройство для диаризации (None → совпадает с device;
+                mps ускоряет извлечение эмбеддингов ~10× на Apple Silicon). Тюнинг не
+                меняет текст ASR — только скорость/устройство диаризации.
+            embedding_batch_size: Размер батча извлечения эмбеддингов (None → дефолт ~32).
+            segmentation_batch_size: Размер батча сегментации (None → дефолт ~32).
+            embedding_backend: Бэкенд эмбеддера диаризации ("torch" | "onnx").
         """
         self.model_name = model_name
         self.device = self._resolve_device(device)
@@ -107,6 +117,11 @@ class GigaAMTranscriber:
         self.verbose = verbose
         # На MPS (Apple GPU) fp16-путь GigaAM не валидирован → держим fp32 для стабильности
         self.fp16_encoder = False if self.device == "mps" else fp16_encoder
+        # Тюнинг диаризации (пробрасывается в DiarizationManager при ленивом создании).
+        self.diar_device = diar_device
+        self.embedding_batch_size = embedding_batch_size
+        self.segmentation_batch_size = segmentation_batch_size
+        self.embedding_backend = embedding_backend
         
         # Lazy-loaded компоненты
         self._model = None
@@ -215,7 +230,10 @@ class GigaAMTranscriber:
         if self._diarization_manager is None:
             self._diarization_manager = DiarizationManager(
                 hf_token=self.hf_token,
-                device=self.device,
+                device=self.diar_device or self.device,
+                embedding_batch_size=self.embedding_batch_size,
+                segmentation_batch_size=self.segmentation_batch_size,
+                embedding_backend=self.embedding_backend,
             )
         return self._diarization_manager
     
@@ -1132,10 +1150,11 @@ class GigaAMTranscriber:
             
             logger.info(f"Обработка {i+1}/{total}: {input_path.name}")
             
-            # Определение выходного пути
+            # Определение выходного пути (расширение по формату, не хардкод .txt)
             output_path = None
             if output_dir:
-                output_path = output_dir / f"{input_path.stem}.txt"
+                ext = kwargs.get("output_format", "txt")
+                output_path = output_dir / f"{input_path.stem}.{ext}"
             
             try:
                 result = self.transcribe(
