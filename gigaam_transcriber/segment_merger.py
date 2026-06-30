@@ -8,10 +8,10 @@
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import List, Optional
 
-from .data_models import SpeakerSegment, TranscriptionSegment
+from .data_models import SpeakerSegment, TranscriptionSegment, merge_provenance
 
 logger = logging.getLogger(__name__)
 
@@ -83,14 +83,12 @@ class SegmentMerger:
         
         for seg in segments:
             if current is None:
-                # Первый сегмент
-                current = TranscriptionSegment(
-                    text=seg.text,
-                    start=seg.start,
-                    end=seg.end,
-                    speaker=seg.speaker,
-                    confidence=seg.confidence,
+                # Первый сегмент. replace() копирует ВСЕ поля (включая
+                # speaker_confidence и будущие provenance/flags) — без потери при сшивке.
+                current = replace(
+                    seg,
                     words=list(seg.words) if seg.words else None,
+                    flags=list(seg.flags),
                 )
             elif self._should_merge(current, seg, max_gap):
                 # Объединяем с текущим
@@ -98,13 +96,10 @@ class SegmentMerger:
             else:
                 # Сохраняем текущий и начинаем новый
                 merged.append(current)
-                current = TranscriptionSegment(
-                    text=seg.text,
-                    start=seg.start,
-                    end=seg.end,
-                    speaker=seg.speaker,
-                    confidence=seg.confidence,
+                current = replace(
+                    seg,
                     words=list(seg.words) if seg.words else None,
+                    flags=list(seg.flags),
                 )
         
         # Добавляем последний сегмент
@@ -162,15 +157,42 @@ class SegmentMerger:
             confidence = seg1.confidence
         elif seg2.confidence is not None:
             confidence = seg2.confidence
-        
-        return TranscriptionSegment(
+
+        # speaker_confidence — взвешенное по длительности среднее (precision-first сигнал)
+        speaker_confidence = self._merge_speaker_confidence(seg1, seg2)
+
+        # provenance — побеждает более «обработанный»; flags — объединение (без потери при сшивке)
+        flags = sorted(set(seg1.flags) | set(seg2.flags))
+        provenance = merge_provenance(seg1.provenance, seg2.provenance)
+
+        # replace на seg1 сохраняет start/speaker, остальные поля задаём явно
+        return replace(
+            seg1,
             text=text,
-            start=seg1.start,
             end=seg2.end,
-            speaker=seg1.speaker,
-            confidence=confidence,
             words=words,
+            confidence=confidence,
+            speaker_confidence=speaker_confidence,
+            provenance=provenance,
+            flags=flags,
         )
+
+    @staticmethod
+    def _merge_speaker_confidence(
+        seg1: TranscriptionSegment,
+        seg2: TranscriptionSegment,
+    ) -> Optional[float]:
+        """Взвешенное по длительности среднее speaker_confidence двух сегментов."""
+        c1, c2 = seg1.speaker_confidence, seg2.speaker_confidence
+        if c1 is None and c2 is None:
+            return None
+        if c1 is None:
+            return c2
+        if c2 is None:
+            return c1
+        d1 = max(seg1.duration, 1e-9)
+        d2 = max(seg2.duration, 1e-9)
+        return (c1 * d1 + c2 * d2) / (d1 + d2)
     
     def merge_short_segments(
         self,

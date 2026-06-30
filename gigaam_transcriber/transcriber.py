@@ -450,9 +450,78 @@ class GigaAMTranscriber:
         )]
     
     def _transcribe_long(self, audio_path: Path) -> List[TranscriptionSegment]:
-        """Транскрипция длинного аудио через transcribe_longform."""
+        """Транскрипция длинного аудио.
+
+        Пытается снять per-chunk acoustic confidence низкоуровневым greedy-циклом
+        (GigaAM main, RNN-T); при недоступности API — fallback на высокоуровневый
+        ``model.transcribe_longform`` (тот же текст, без confidence)."""
         logger.debug(f"Транскрипция длинного аудио: {audio_path}")
-        
+        try:
+            return self._transcribe_long_with_confidence(audio_path)
+        except Exception as e:
+            logger.warning(
+                f"Per-chunk confidence недоступен ({e!r}); "
+                "fallback на model.transcribe_longform без confidence"
+            )
+            return self._transcribe_long_plain(audio_path)
+
+    def _transcribe_long_with_confidence(
+        self, audio_path: Path
+    ) -> List[TranscriptionSegment]:
+        """Низкоуровневый longform-декод с per-chunk confidence (greedy RNN-T).
+
+        Воспроизводит ``model.transcribe_longform`` (тот же ``segment_audio_file`` +
+        ``forward`` + greedy-декод), но через ``decode_with_confidence``: текст
+        **бит-в-бит** идентичен (argmax по log-softmax == argmax по логитам, I1),
+        дополнительно — ``confidence`` на каждый чанк. Требует GigaAM main API."""
+        import torch
+        from torch.utils.data import DataLoader
+
+        from gigaam.preprocess import SAMPLE_RATE
+        from gigaam.utils import AudioDataset
+        from gigaam.vad_utils import segment_audio_file
+
+        from .confidence import decode_with_confidence
+
+        model = self.model
+        seg_audios, boundaries = segment_audio_file(
+            str(audio_path), SAMPLE_RATE, device=model._device
+        )
+        if not seg_audios:
+            return []
+
+        ds = AudioDataset(seg_audios, tokenizer=None)
+        dl = DataLoader(
+            ds,
+            batch_size=16,
+            shuffle=False,
+            collate_fn=AudioDataset.collate,
+            num_workers=0,
+        )
+
+        segments: List[TranscriptionSegment] = []
+        idx = 0
+        with torch.inference_mode():
+            for wav_pad, wav_lens in dl:
+                wav_pad = wav_pad.to(model._device).to(model._dtype)
+                wav_lens = wav_lens.to(model._device)
+                encoded, encoded_len = model.forward(wav_pad, wav_lens)
+                for text, conf in decode_with_confidence(
+                    model, encoded, encoded_len, wav_lens
+                ):
+                    seg_start, seg_end = boundaries[idx]
+                    idx += 1
+                    if text and text.strip():
+                        segments.append(TranscriptionSegment(
+                            text=text.strip(),
+                            start=seg_start,
+                            end=seg_end,
+                            confidence=conf,
+                        ))
+        return segments
+
+    def _transcribe_long_plain(self, audio_path: Path) -> List[TranscriptionSegment]:
+        """Высокоуровневый longform без confidence (fallback / GigaAM 0.1.0)."""
         try:
             result = self.model.transcribe_longform(str(audio_path))
         except Exception as e:
@@ -483,7 +552,7 @@ class GigaAMTranscriber:
                     start=start,
                     end=end,
                 ))
-        
+
         return segments
     
     def _apply_diarization(
