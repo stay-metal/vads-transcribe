@@ -253,6 +253,8 @@ class GigaAMTranscriber:
         min_segment_gap: float = 0.5,
         glossary: bool = True,
         second_opinion: bool = False,
+        voiceprint: bool = False,
+        voiceprint_gallery: Optional[Union[str, Path]] = None,
         emit_l0: bool = False,
     ) -> TranscriptionResult:
         """
@@ -317,6 +319,24 @@ class GigaAMTranscriber:
             fl = detect_quality_flags(seg.text)
             if fl:
                 seg.flags = sorted(set(seg.flags) | set(fl))
+
+        # Voiceprint: переименовать анонимных «Спикер №N» в реальные имена по галерее голосов
+        # (opt-in, precision-first: при сомнении метка остаётся «Спикер №N»). Меняет МЕТКУ
+        # спикера, не текст (provenance текста не трогаем). UI не задействован.
+        if voiceprint and voiceprint_gallery and result.segments:
+            try:
+                from .voiceprint import DEFAULT_THRESHOLD, load_gallery, name_diarized_speakers
+                refs, gtheta, gmargin = load_gallery(voiceprint_gallery)
+                if refs:
+                    thr = gtheta if gtheta is not None else DEFAULT_THRESHOLD
+                    named = name_diarized_speakers(
+                        result, input_path, refs, thr=thr, margin=gmargin
+                    )
+                    if named:
+                        result.metadata["voiceprint_named"] = named
+                        logger.info(f"Voiceprint: {named} спикеров названо")
+            except Exception as e:
+                logger.warning(f"Voiceprint пропущен: {e!r}")
 
         # Сшивка сегментов
         if merge_same_speaker and result.segments:
