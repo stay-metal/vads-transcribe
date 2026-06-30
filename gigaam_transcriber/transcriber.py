@@ -269,6 +269,7 @@ class GigaAMTranscriber:
         second_opinion: bool = False,
         voiceprint: bool = False,
         voiceprint_gallery: Optional[Union[str, Path]] = None,
+        preclean: bool = False,
         emit_l0: bool = False,
     ) -> TranscriptionResult:
         """
@@ -310,6 +311,8 @@ class GigaAMTranscriber:
         
         # Определяем тип файла и вызываем соответствующий метод (с постадийным таймингом)
         from .stage_timing import StageTimer
+        # Preclean-фильтр (#17, opt-in): highpass=80 убирает НЧ-гул, loudnorm выравнивает громкость.
+        _PRECLEAN = "highpass=f=80,loudnorm=I=-23:LRA=7:TP=-2"
         timer = StageTimer()
         with timer.measure("decode_diarize"):
             if self.audio_processor.is_video_file(input_path):
@@ -324,6 +327,7 @@ class GigaAMTranscriber:
                 result = self._transcribe_audio(
                     input_path,
                     diarization=diarization,
+                    preclean_filter=(_PRECLEAN if preclean else None),
                     num_speakers=num_speakers,
                     min_speakers=min_speakers,
                     max_speakers=max_speakers,
@@ -410,6 +414,8 @@ class GigaAMTranscriber:
         result.metadata["layer_versions"] = pipeline_versions()
         if getattr(self, "_device_fell_back", False):
             result.metadata["device_fallback"] = self.device
+        if preclean:
+            result.metadata["preclean"] = _PRECLEAN
         
         logger.info(
             f"Транскрипция завершена за {processing_time:.1f}с "
@@ -436,13 +442,21 @@ class GigaAMTranscriber:
         self,
         audio_path: Path,
         diarization: DiarizationMode = "none",
+        preclean_filter: Optional[str] = None,
         **diarization_kwargs,
     ) -> TranscriptionResult:
         """Внутренний метод транскрипции аудио."""
         # Подготовка аудио (конвертация в нужный формат)
         temp_audio = None
         try:
-            if audio_path.suffix.lower() != ".wav":
+            if preclean_filter:
+                # Preclean (#17, opt-in): highpass+loudnorm перед ASR. МЕНЯЕТ вход → меняет
+                # текст (НЕ I1-neutral) — строго по флагу, под A/B-сравнение.
+                temp_audio = self.audio_processor.normalize(
+                    audio_path, audio_filter=preclean_filter
+                )
+                working_audio = temp_audio
+            elif audio_path.suffix.lower() != ".wav":
                 temp_audio = self.audio_processor.prepare_for_gigaam(audio_path)
                 working_audio = temp_audio
             else:
