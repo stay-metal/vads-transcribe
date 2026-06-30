@@ -270,6 +270,8 @@ class GigaAMTranscriber:
         voiceprint: bool = False,
         voiceprint_gallery: Optional[Union[str, Path]] = None,
         preclean: bool = False,
+        backend: str = "torch",
+        onnx_int8: bool = False,
         emit_l0: bool = False,
     ) -> TranscriptionResult:
         """
@@ -295,7 +297,11 @@ class GigaAMTranscriber:
         """
         input_path = Path(input_path)
         start_time = time.time()
-        
+        # Бэкенд декода: "torch" (дефолт, даёт confidence) или "onnx" (CPU/CUDA, int8-ускорение,
+        # БЕЗ per-chunk confidence — ONNX argmax не отдаёт logprob; текст argmax-идентичен torch).
+        self._backend = backend
+        self._onnx_int8 = onnx_int8
+
         # Валидация
         self._validate_input(input_path)
         
@@ -416,6 +422,7 @@ class GigaAMTranscriber:
             result.metadata["device_fallback"] = self.device
         if preclean:
             result.metadata["preclean"] = _PRECLEAN
+        result.metadata["backend"] = getattr(self, "_backend", "torch")
         
         logger.info(
             f"Транскрипция завершена за {processing_time:.1f}с "
@@ -473,7 +480,9 @@ class GigaAMTranscriber:
             duration = self.audio_processor.get_duration(working_audio)
             
             # Транскрипция
-            if duration <= self.MAX_SHORT_DURATION:
+            if getattr(self, "_backend", "torch") == "onnx":
+                segments = self._transcribe_onnx(working_audio)
+            elif duration <= self.MAX_SHORT_DURATION:
                 segments = self._transcribe_short(working_audio)
             else:
                 segments = self._transcribe_long(working_audio)
@@ -671,7 +680,43 @@ class GigaAMTranscriber:
                 ))
 
         return segments
-    
+
+    def _get_onnx(self):
+        """Лениво: экспорт+загрузка ONNX-сессий GigaAM (кэш на инстансе). → (sessions, model_cfg)."""
+        if getattr(self, "_onnx", None) is None:
+            from .onnx_backend import ensure_onnx, load_sessions
+            onnx_dir, version = ensure_onnx(
+                self.model_name, int8=getattr(self, "_onnx_int8", False)
+            )
+            self._onnx = load_sessions(onnx_dir, version, "cpu")
+        return self._onnx
+
+    def _transcribe_onnx(self, audio_path: Path) -> List[TranscriptionSegment]:
+        """ONNX-декод (#13): segment_audio_file + infer_onnx. БЕЗ per-chunk confidence
+        (ONNX argmax не отдаёт logprob — для confidence используйте backend='torch').
+        Текст argmax-идентичен torch; int8 ускоряет на CPU-сервере."""
+        from gigaam.onnx_utils import infer_onnx
+        from gigaam.preprocess import SAMPLE_RATE
+        from gigaam.vad_utils import segment_audio_file
+
+        sessions, cfg = self._get_onnx()
+        seg_audios, boundaries = segment_audio_file(str(audio_path), SAMPLE_RATE)
+        if not seg_audios:
+            return []
+        segments: List[TranscriptionSegment] = []
+        idx = 0
+        for i in range(0, len(seg_audios), 16):
+            chunk = seg_audios[i: i + 16]
+            texts = infer_onnx(chunk, cfg, sessions, batch_size=len(chunk), progress=False)
+            for text in texts:
+                seg_start, seg_end = boundaries[idx]
+                idx += 1
+                if text and str(text).strip():
+                    segments.append(TranscriptionSegment(
+                        text=str(text).strip(), start=seg_start, end=seg_end
+                    ))
+        return segments
+
     def _apply_diarization(
         self,
         audio_path: Path,
