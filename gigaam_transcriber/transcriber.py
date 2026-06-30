@@ -27,6 +27,7 @@ from .data_models import (
     SpeakerSegment,
     TranscriptionResult,
     TranscriptionSegment,
+    WordSegment,
 )
 from .diarization import DiarizationManager
 from .exceptions import (
@@ -272,6 +273,7 @@ class GigaAMTranscriber:
         preclean: bool = False,
         backend: str = "torch",
         onnx_int8: bool = False,
+        word_timestamps: bool = False,
         emit_l0: bool = False,
     ) -> TranscriptionResult:
         """
@@ -301,6 +303,7 @@ class GigaAMTranscriber:
         # БЕЗ per-chunk confidence — ONNX argmax не отдаёт logprob; текст argmax-идентичен torch).
         self._backend = backend
         self._onnx_int8 = onnx_int8
+        self._word_timestamps = word_timestamps
 
         # Валидация
         self._validate_input(input_path)
@@ -625,6 +628,7 @@ class GigaAMTranscriber:
             num_workers=0,
         )
 
+        wt = getattr(self, "_word_timestamps", False)
         segments: List[TranscriptionSegment] = []
         idx = 0
         with torch.inference_mode():
@@ -632,17 +636,29 @@ class GigaAMTranscriber:
                 wav_pad = wav_pad.to(model._device).to(model._dtype)
                 wav_lens = wav_lens.to(model._device)
                 encoded, encoded_len = model.forward(wav_pad, wav_lens)
-                for text, conf in decode_with_confidence(
-                    model, encoded, encoded_len, wav_lens
+                for text, conf, words in decode_with_confidence(
+                    model, encoded, encoded_len, wav_lens, word_timestamps=wt
                 ):
                     seg_start, seg_end = boundaries[idx]
                     idx += 1
                     if text and text.strip():
+                        word_segs = None
+                        if words:
+                            # Времена слов — относительно начала чанка → глобализуем (+seg_start).
+                            word_segs = [
+                                WordSegment(
+                                    word=w.text,
+                                    start=round(w.start + seg_start, 3),
+                                    end=round(w.end + seg_start, 3),
+                                )
+                                for w in words
+                            ]
                         segments.append(TranscriptionSegment(
                             text=text.strip(),
                             start=seg_start,
                             end=seg_end,
                             confidence=conf,
+                            words=word_segs,
                         ))
         return segments
 
