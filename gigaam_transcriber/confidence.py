@@ -165,25 +165,33 @@ def as_confident(decoding: "RNNTGreedyDecoding") -> "ConfidentRNNTGreedyDecoding
 
 
 def decode_with_confidence(
-    model, encoded: Tensor, encoded_len: Tensor, wav_lens: Tensor
-) -> List[Tuple[str, Optional[float]]]:
-    """Декод чанков + per-chunk confidence; текст **бит-в-бит** как у ``model._decode``.
+    model, encoded: Tensor, encoded_len: Tensor, wav_lens: Tensor,
+    word_timestamps: bool = False,
+) -> List[Tuple[str, Optional[float], object]]:
+    """Декод чанков → ``(text, confidence, words)``; текст **бит-в-бит** как у ``model._decode``.
 
     Если ``model.decoding`` — ``RNNTGreedyDecoding`` (greedy RNN-T, как у v3_e2e_rnnt),
     используем confident-субкласс: выбор токенов (argmax по log-softmax) идентичен апстриму,
-    поэтому текст не меняется, а из logprob'ов считаем ``chunk_confidence``. Иначе (CTC и пр.)
-    деградируем на ``model._decode`` — текст тот же, confidence ``None``. I1: confidence —
-    наблюдение, кириллица GigaAM не трогается."""
+    поэтому текст не меняется, а из logprob'ов считаем ``chunk_confidence``. При
+    ``word_timestamps=True`` дополнительно строим пословные таймкоды из ``token_frames``
+    (``frames_to_words``, как в ``model._decode``) — относительно начала чанка. Иначе (CTC)
+    деградируем на ``model._decode``. I1: confidence/words — наблюдение, кириллица не трогается."""
     decoding = getattr(model, "decoding", None)
     if isinstance(decoding, RNNTGreedyDecoding):
         conf = as_confident(decoding)
-        return [
-            (text, chunk_confidence(logprobs))
-            for text, _ids, _frames, logprobs in conf.decode(
-                model.head, encoded, encoded_len
-            )
-        ]
+        decoded = conf.decode(model.head, encoded, encoded_len)
+        out = []
+        for i, (text, ids, frames, logprobs) in enumerate(decoded):
+            words = None
+            if word_timestamps:
+                from gigaam.timestamps_utils import compute_frame_shift, frames_to_words
+                frame_shift = compute_frame_shift(
+                    int(wav_lens[i].item()), int(encoded_len[i].item())
+                )
+                words = frames_to_words(decoding.tokenizer, ids, frames, frame_shift)
+            out.append((text, chunk_confidence(logprobs), words))
+        return out
     return [
-        (text, None)
-        for text, _words in model._decode(encoded, encoded_len, wav_lens, False)
+        (text, None, words)
+        for text, words in model._decode(encoded, encoded_len, wav_lens, word_timestamps)
     ]

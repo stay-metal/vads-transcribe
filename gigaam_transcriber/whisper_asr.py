@@ -186,7 +186,7 @@ def apply_second_opinion(
     Возвращает число изменённых сегментов. Кириллица не трогается (fusion меняет лишь
     латиницу/числа). Уверенные прочтения сливаются, неуверенные → GigaAM (precision-first).
     На изменённых сегментах provenance → 'second-opinion'."""
-    from .fusion import fuse
+    from .fusion import fuse_with_corrections
 
     alias_map = alias_map or {}
     candidates = [s for s in result.segments if is_candidate(s.text)]
@@ -195,6 +195,7 @@ def apply_second_opinion(
     waveform = _load_waveform_16k_mono(audio_path)
     context = _build_context(alias_map)
     changed = 0
+    all_corrections = []
     for seg in candidates:
         a = waveform[int(seg.start * _SAMPLE_RATE): int(seg.end * _SAMPLE_RATE)]
         if a.size == 0:
@@ -202,9 +203,18 @@ def apply_second_opinion(
         res = second_opinion(a, model=model, context=context)
         if not res["confident"] or not res["text"]:
             continue
-        new_text = fuse(seg.text, res["text"], alias_map)
+        new_text, corrections = fuse_with_corrections(seg.text, res["text"], alias_map)
         if new_text != seg.text:
             seg.text = new_text
             seg.provenance = merge_provenance(seg.provenance, "second-opinion")
             changed += 1
+        all_corrections.extend(corrections)
+    # Самообучение глоссария (#20): копим устойчивые латиница-правки в лог; offline
+    # harvest_log сворачивает частые (count>=3) в кандидаты-terms под lint (ручная курация).
+    if all_corrections:
+        try:
+            from .glossary_grow import log_corrections
+            log_corrections(all_corrections)
+        except Exception:
+            pass
     return changed
