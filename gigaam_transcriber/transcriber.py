@@ -448,6 +448,97 @@ class GigaAMTranscriber:
 
         return result
     
+    @staticmethod
+    def discover_route_a_tracks(
+        folder: Union[str, Path], speaker_dir: str = "Audio Record"
+    ) -> Dict[str, str]:
+        """Найти per-участниковые дорожки в ``<folder>/<speaker_dir>/*.m4a`` → {имя: путь}.
+
+        Имя — best-effort (strip 'audio'+хвостовые цифры magic/index, camelCase→пробел),
+        канонизируется через глоссарий ``people`` если доступен. NFC-нормализация (macOS
+        хранит кириллицу в NFD). Caller может передать свой dict в ``transcribe_route_a``."""
+        import glob
+        import re
+        import unicodedata
+
+        base = Path(folder)
+        d = base / speaker_dir
+        d = d if d.is_dir() else base
+        files = glob.glob(str(d / "*.m4a"))
+        people: Dict[str, str] = {}
+        try:
+            from .glossary import load_glossary
+            g = load_glossary()
+            people = {
+                k.lower(): v for k, v in (g.get("people") or {}).items()
+                if not k.startswith("_")
+            }
+        except Exception:
+            pass
+        tracks: Dict[str, str] = {}
+        for f in files:
+            stem = unicodedata.normalize("NFC", Path(f).stem)
+            raw = re.sub(r"^audio", "", stem)
+            raw = re.sub(r"\d+$", "", raw)  # хвостовые magic+index
+            spaced = re.sub(r"(?<=[a-zа-яё])(?=[A-ZА-ЯЁ])", " ", raw).strip()
+            name = people.get(spaced.lower(), spaced)
+            if name:
+                tracks[name] = f
+        return tracks
+
+    def transcribe_route_a(
+        self,
+        tracks: Dict[str, Union[str, Path]],
+        output_path: Optional[Union[str, Path]] = None,
+        output_format: OutputFormat = "txt",
+        glossary: bool = True,
+        min_segment_gap: float = 0.5,
+    ) -> TranscriptionResult:
+        """Route A (#21, библиотечный путь): дорожки участников → имена ground-truth.
+
+        ``tracks`` = {имя: путь}; каждая дорожка — речь ОДНОГО участника (Zoom Audio Record).
+        ASR каждой дорожки → сегменты с speaker=имя (БЕЗ диаризации/voiceprint — имена точные).
+        Сегменты сливаются на общий таймлайн (сортировка по времени) + сшивка одного спикера.
+        Глоссарий применяется. UI (cli_ui, один wav) не задействован. De-bleed перекрытий —
+        точка роста (сейчас кросстолк может попасть на несколько дорожек)."""
+        start_time = time.time()
+        self._backend = "torch"
+        self._onnx_int8 = False
+        self._word_timestamps = False
+        all_segments: List[TranscriptionSegment] = []
+        for name, path in tracks.items():
+            r = self._transcribe_audio(Path(path), diarization="none")
+            for seg in r.segments:
+                seg.speaker = name
+            all_segments.extend(r.segments)
+        all_segments.sort(key=lambda s: (s.start, s.end))
+        merger = SegmentMerger(MergeConfig(max_gap=min_segment_gap))
+        all_segments = merger.merge_same_speaker_segments(all_segments, max_gap=min_segment_gap)
+
+        result = TranscriptionResult(
+            text=" ".join(s.text for s in all_segments),
+            segments=all_segments,
+            duration=max((s.end for s in all_segments), default=0.0),
+            language="ru",
+            model_name=self.model_name,
+            processing_time=time.time() - start_time,
+            metadata={"route": "A", "tracks": list(tracks.keys())},
+        )
+        if glossary and result.segments:
+            try:
+                from .glossary import apply_to_segments, load_runtime
+                amap, suf = load_runtime()
+                if amap:
+                    n = apply_to_segments(result.segments, amap, suf)
+                    if n:
+                        result.text = " ".join(s.text for s in result.segments)
+                        result.metadata["glossary_replacements"] = n
+            except Exception as e:
+                logger.warning(f"Глоссарий пропущен (Route A): {e!r}")
+        if output_path:
+            save_result(result, output_path, output_format)
+        return result
+
     def _transcribe_audio(
         self,
         audio_path: Path,
