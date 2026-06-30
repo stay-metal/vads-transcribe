@@ -308,7 +308,15 @@ class GigaAMTranscriber:
                 min_speakers=min_speakers,
                 max_speakers=max_speakers,
             )
-        
+
+        # Флаги риска качества текста (галлюцинации/лупы) — ПОМЕТКА, не правка (I1).
+        # До сшивки (на сырых ASR-сегментах); merge объединит flags.
+        from .text_quality import detect_quality_flags
+        for seg in result.segments:
+            fl = detect_quality_flags(seg.text)
+            if fl:
+                seg.flags = sorted(set(seg.flags) | set(fl))
+
         # Сшивка сегментов
         if merge_same_speaker and result.segments:
             merger = SegmentMerger(MergeConfig(max_gap=min_segment_gap))
