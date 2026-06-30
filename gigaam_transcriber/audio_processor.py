@@ -178,6 +178,7 @@ class AudioProcessor:
         output_path: Optional[Path | str] = None,
         sample_rate: int = None,
         channels: int = None,
+        audio_filter: Optional[str] = None,
     ) -> Path:
         """
         Нормализация аудио в формат, оптимальный для GigaAM.
@@ -207,11 +208,12 @@ class AudioProcessor:
             os.close(fd)
         output_path = Path(output_path)
         
-        # Команда ffmpeg
+        # Команда ffmpeg (+ опц. -af фильтр-цепочка для preclean: highpass/loudnorm)
         cmd = [
             self.ffmpeg_path,
             "-y",  # Перезаписывать
             "-i", str(input_path),
+            *(["-af", audio_filter] if audio_filter else []),
             "-ar", str(sample_rate),  # Sample rate
             "-ac", str(channels),  # Channels (mono)
             "-c:a", "pcm_s16le",  # 16-bit PCM
