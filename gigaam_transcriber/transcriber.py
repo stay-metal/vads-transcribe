@@ -251,6 +251,7 @@ class GigaAMTranscriber:
         output_format: OutputFormat = "txt",
         merge_same_speaker: bool = True,
         min_segment_gap: float = 0.5,
+        glossary: bool = True,
     ) -> TranscriptionResult:
         """
         Универсальный метод транскрипции.
@@ -316,7 +317,22 @@ class GigaAMTranscriber:
             )
             # Обновляем полный текст
             result.text = " ".join(seg.text for seg in result.segments)
-        
+
+        # Канонизация имён/терминов (глоссарий) — детерминированный I1-safe пост-проход.
+        # Меняет только курируемые алиасы (lint по russian/english_words), кириллица verbatim.
+        if glossary and result.segments:
+            try:
+                from .glossary import apply_to_segments, load_runtime
+                amap, suffixable = load_runtime()
+                if amap:
+                    n = apply_to_segments(result.segments, amap, suffixable)
+                    if n:
+                        result.text = " ".join(seg.text for seg in result.segments)
+                        result.metadata["glossary_replacements"] = n
+                        logger.info(f"Глоссарий: {n} замен")
+            except Exception as e:
+                logger.warning(f"Глоссарий пропущен: {e!r}")
+
         # Обновление метаданных
         processing_time = time.time() - start_time
         result.processing_time = processing_time
