@@ -1,0 +1,15 @@
+# Линтеры проекта (конфиг — в pyproject.toml: [tool.ruff]/[tool.black]).
+# Установка: pip install pre-commit && pre-commit install
+# Разовый прогон по всему репозиторию: pre-commit run --all-files
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.20
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^(gigaam_transcriber|tests)/
+  - repo: https://github.com/psf/black
+    rev: 26.5.1
+    hooks:
+      - id: black
+        files: ^(gigaam_transcriber|tests)/

@@ -2,9 +2,66 @@
 
 Обёртка над [GigaAM](https://github.com/salute-developers/GigaAM) (ASR от Salute) для транскрипции аудио/видео любой длительности с опциональной диаризацией спикеров через [pyannote](https://github.com/pyannote/pyannote-audio).
 
-Два CLI:
-- **`gigaam-ui`** — транскрипция с живым UI (`rich`): реальный прогресс по стадиям + метрики (время, скорость ×реалтайма, ETA, спикеры). **Рекомендуется.**
-- `gigaam-transcribe` — простой CLI из исходного репозитория.
+## CLI `dialogscribe` (рекомендуется)
+
+Единый CLI — тонкая обёртка над библиотекой `gigaam_transcriber` (один источник истины,
+без дублирующего декод-цикла):
+
+```bash
+dialogscribe transcribe <файл> [опции]          # один файл
+dialogscribe batch <файлы...> -o OUTDIR [опции]  # пакет
+dialogscribe route-a <папка> [-o OUT] [-f txt]   # подорожечно (имена дорожек, без HF_TOKEN)
+dialogscribe gallery build <имя> --track Метка=ПУТЬ ...   # голосовая галерея (--voiceprint)
+dialogscribe gallery list | dialogscribe gallery rm <имя>
+dialogscribe serve [--host --port]               # web-сервер (milestone M2, в разработке)
+```
+
+Команды `transcribe` и `batch` выставляют один и тот же набор opt-in флагов слоя
+качества и бэкендов: `--diarize`, `--glossary/--no-glossary`, `--second-opinion`,
+`--voiceprint --gallery P`, `--preclean`, `--backend torch|onnx`, `--onnx-int8`,
+`--onnx-encoder`, `--word-timestamps`, `--emit-l0`, а также тюнинг диаризации
+`--diar-device/--diar-backend/--embedding-batch-size/--segmentation-batch-size`.
+Флаги `--resume --manifest P` специфичны для одиночного файла и есть только в
+`transcribe`. `dialogscribe <команда> --help` — полный список.
+
+Поток вывода: stdout несёт **только** машинный результат (когда `-o` не задан),
+поэтому `dialogscribe transcribe a.m4a -f json > out.json` и
+`dialogscribe route-a ./rec -f json > out.json` дают валидный файл — баннеры,
+summary, предупреждения и прогресс идут в stderr. У `transcribe`/`route-a` есть
+`-q/--quiet` для подавления summary.
+
+> Легаси-точки `gigaam-ui` / `gigaam-transcribe` / `gigaam-batch` оставлены алиасами
+> на один релиз (живой rich-UI `gigaam-ui` с per-сегментным ASR-прогрессом пока богаче
+> по прогрессу single-file; в `dialogscribe` истинный single-file % придёт в v1.x).
+
+---
+
+## Web-сервер и интерфейс (M2–M4)
+
+Сервер: FastAPI api (auth по общим кредам + REST + раздача SPA) · Huey 2 очереди
+(`gpu` — транскрипция, `io` — скачивание) · единственный gpu-worker держит тёплую модель.
+SPA: Vite+React+Tailwind+wavesurfer — загрузка записей (подорожечно/микс), подтверждение
+участников, очередь джоб со стадийным прогрессом, просмотрщик транскрипта с аудио-синхронизацией,
+правкой имён спикеров, бейджами качества и скачиванием форматов.
+
+```bash
+# Локальная разработка
+pip install -e ".[server,diarization]"
+python -c "from gigaam_transcriber.server.security import hash_password; print(hash_password('ВАША-ФРАЗА'))"
+export DIALOGSCRIBE_PASSWORD_HASH=<хэш> DIALOGSCRIBE_SESSION_KEY=<48+ симв.> DIALOGSCRIBE_FERNET_KEY=<...>
+export DIALOGSCRIBE_COOKIE_SECURE=0 DIALOGSCRIBE_REQUIRE_HTTPS=0   # только для dev по HTTP
+
+# api (uvicorn)
+dialogscribe serve --port 8000
+# gpu-worker (отдельный процесс, boot-guard -k process -w 1)
+python -m gigaam_transcriber.server.run_gpu_worker -k process -w 1
+# frontend (dev-сервер с прокси на :8000) ИЛИ сборка в static
+cd frontend && npm install && npm run dev      # dev
+cd frontend && npm run build                   # прод-сборка → раздаётся FastAPI
+
+# Прод: один docker compose (nginx TLS + api + gpu-worker + io-worker)
+cd deploy && cp .env.example .env && docker compose up -d --build
+```
 
 ---
 

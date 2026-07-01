@@ -8,10 +8,20 @@ def _result():
     return TranscriptionResult(
         text="привет мир",
         segments=[
-            TranscriptionSegment(text="привет мир", start=0, end=1, speaker="S",
-                                 confidence=0.9, provenance="glossary", flags=["x"]),
+            TranscriptionSegment(
+                text="привет мир",
+                start=0,
+                end=1,
+                speaker="S",
+                confidence=0.9,
+                provenance="glossary",
+                flags=["x"],
+            ),
         ],
-        duration=1.0, language="ru", model_name="v3_e2e_rnnt", processing_time=2.0,
+        duration=1.0,
+        language="ru",
+        model_name="v3_e2e_rnnt",
+        processing_time=2.0,
         metadata={"source": "a.wav"},
     )
 

@@ -11,8 +11,8 @@ from gigaam_transcriber.glossary import (
     apply_glossary,
     apply_to_segments,
     lint,
-    load_glossary,
     load_en_words,
+    load_glossary,
     load_ru_words,
     suffixable_aliases,
 )
@@ -90,6 +90,7 @@ def test_apply_to_segments_sets_provenance_only_when_changed():
 def test_apply_to_segments_drops_stale_words_on_change():
     """seg.words устаревают после замены текста → сбрасываются (рассинхрон в JSON, bug_009)."""
     from gigaam_transcriber.data_models import WordSegment
+
     changed = TranscriptionSegment(
         text="наш харнес",
         start=0,
@@ -107,8 +108,8 @@ def test_apply_to_segments_drops_stale_words_on_change():
     )
     apply_to_segments([changed, untouched], {"харнес": "Harness"})
     assert changed.text == "наш Harness"
-    assert changed.words is None              # сброшены — текст изменён
-    assert untouched.words is not None        # не тронут — тайминги сохранены
+    assert changed.words is None  # сброшены — текст изменён
+    assert untouched.words is not None  # не тронут — тайминги сохранены
 
 
 def test_real_config_lints_clean():

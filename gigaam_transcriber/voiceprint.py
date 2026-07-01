@@ -15,11 +15,11 @@
 путаница scope: текст остаётся gigaam). Калибровка θ (LOO) и резюмируемая корпус-галерея не
 портированы — используем дефолтные пороги (можно поднять при росте галереи).
 """
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -58,10 +58,10 @@ def cosine(a, b) -> float:
 
 def name_speaker(
     segment_emb,
-    refs: Dict[str, "np.ndarray"],
+    refs: dict[str, np.ndarray],
     thr: float = DEFAULT_THRESHOLD,
     margin: float = DEFAULT_MARGIN,
-) -> Optional[str]:
+) -> str | None:
     """Имя спикера по voiceprint или None (precision-first).
 
     Имя топ-референса только при ``cos(top1) >= thr`` И ``cos(top1) − cos(top2) >= margin``.
@@ -70,7 +70,8 @@ def name_speaker(
         return None
     scored = sorted(
         ((cosine(segment_emb, ref), name) for name, ref in refs.items()),
-        key=lambda item: item[0], reverse=True,
+        key=lambda item: item[0],
+        reverse=True,
     )
     top_cos, top_name = scored[0]
     effective_thr = max(thr, SINGLE_REF_THRESHOLD) if len(refs) == 1 else thr
@@ -84,12 +85,12 @@ def name_speaker(
 
 def vote_speaker(
     window_embs,
-    refs: Dict[str, "np.ndarray"],
+    refs: dict[str, np.ndarray],
     thr: float = DEFAULT_THRESHOLD,
     margin: float = DEFAULT_MARGIN,
     min_windows: int = VOTE_MIN_WINDOWS,
     majority: float = VOTE_MAJORITY,
-) -> Optional[str]:
+) -> str | None:
     """Имя по голосованию пер-оконных эмбеддингов (recovery), precision-first.
 
     Каждое окно голосует через тот же gate ``name_speaker``. Имя X — только если за него
@@ -118,6 +119,7 @@ def _load_embedder():
     if _EMBEDDER is not None:
         return _EMBEDDER
     from speechbrain.inference.speaker import EncoderClassifier
+
     savedir = Path.home() / ".cache" / "speechbrain" / "spkrec-ecapa-voxceleb"
     _EMBEDDER = EncoderClassifier.from_hparams(source=ECAPA_SOURCE, savedir=str(savedir))
     return _EMBEDDER
@@ -125,6 +127,7 @@ def _load_embedder():
 
 def _load_waveform_16k_mono(audio_path) -> np.ndarray:
     import torchaudio
+
     wav, sr = torchaudio.load(str(audio_path))
     if sr != SAMPLE_RATE:
         wav = torchaudio.transforms.Resample(sr, SAMPLE_RATE)(wav)
@@ -133,7 +136,7 @@ def _load_waveform_16k_mono(audio_path) -> np.ndarray:
     return wav[0].numpy().astype(np.float32)
 
 
-def window_vectors(audio, embedder=None) -> List["np.ndarray"]:
+def window_vectors(audio, embedder=None) -> list[np.ndarray]:
     """Пер-оконные ECAPA-эмбеддинги (без усреднения). Тихие/короткие окна пропускаются."""
     import torch
 
@@ -142,10 +145,10 @@ def window_vectors(audio, embedder=None) -> List["np.ndarray"]:
     win = int(WINDOW_SEC * SAMPLE_RATE)
     hop = int(WINDOW_HOP_SEC * SAMPLE_RATE)
     n = wave.numel()
-    vectors: List[np.ndarray] = []
+    vectors: list[np.ndarray] = []
     starts = range(0, max(1, n - win + 1), hop) if n >= win else [0]
     for s in starts:
-        seg = wave[s: s + win]
+        seg = wave[s : s + win]
         if seg.numel() < SAMPLE_RATE:
             continue
         if float(torch.sqrt(torch.mean(seg.float() ** 2))) < SILENCE_RMS:
@@ -156,7 +159,7 @@ def window_vectors(audio, embedder=None) -> List["np.ndarray"]:
     return vectors
 
 
-def embed_windows(audio, embedder=None) -> "np.ndarray":
+def embed_windows(audio, embedder=None) -> np.ndarray:
     """Нормированный центроид ECAPA-эмбеддингов по окнам (или нулевой вектор, если речи нет)."""
     vectors = window_vectors(audio, embedder)
     if not vectors:
@@ -170,10 +173,11 @@ def embed_windows(audio, embedder=None) -> "np.ndarray":
 # Галерея: построение из дорожек + сохранение/загрузка.
 # --------------------------------------------------------------------------------------
 
-def build_gallery_from_tracks(tracks: Dict[str, str], embedder=None) -> Dict[str, "np.ndarray"]:
+
+def build_gallery_from_tracks(tracks: dict[str, str], embedder=None) -> dict[str, np.ndarray]:
     """{имя: путь_к_дорожке} → {имя: 192-центроид}. Дорожки с одной речью одного спикера."""
     emb = embedder if embedder is not None else _load_embedder()
-    refs: Dict[str, np.ndarray] = {}
+    refs: dict[str, np.ndarray] = {}
     for name, path in tracks.items():
         wave = _load_waveform_16k_mono(path)
         centroid = embed_windows(wave, emb)
@@ -182,8 +186,9 @@ def build_gallery_from_tracks(tracks: Dict[str, str], embedder=None) -> Dict[str
     return refs
 
 
-def save_gallery(refs: Dict[str, "np.ndarray"], path, *, theta: Optional[float] = None,
-                 margin: float = DEFAULT_MARGIN) -> Path:
+def save_gallery(
+    refs: dict[str, np.ndarray], path, *, theta: float | None = None, margin: float = DEFAULT_MARGIN
+) -> Path:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     obj = {
@@ -195,6 +200,7 @@ def save_gallery(refs: Dict[str, "np.ndarray"], path, *, theta: Optional[float] 
     tmp = path.parent / (path.name + ".tmp")
     tmp.write_text(json.dumps(obj, ensure_ascii=False), encoding="utf-8")
     import os
+
     os.replace(tmp, path)
     return path
 
@@ -213,10 +219,11 @@ def load_gallery(path):
 # Оркестрация: переименовать диаризованных «Спикер №N» по галерее.
 # --------------------------------------------------------------------------------------
 
+
 def name_diarized_speakers(
     result: TranscriptionResult,
     audio_path,
-    refs: Dict[str, "np.ndarray"],
+    refs: dict[str, np.ndarray],
     *,
     thr: float = DEFAULT_THRESHOLD,
     margin: float = DEFAULT_MARGIN,
@@ -233,11 +240,12 @@ def name_diarized_speakers(
         return 0
     waveform = _load_waveform_16k_mono(audio_path)
     embedder = _load_embedder()
-    by_label: Dict[str, List[np.ndarray]] = {}
+    by_label: dict[str, list[np.ndarray]] = {}
     for label in dict.fromkeys(labels):  # уникальные, сохраняя порядок
         chunks = [
-            waveform[int(s.start * SAMPLE_RATE): int(s.end * SAMPLE_RATE)]
-            for s in result.segments if s.speaker == label
+            waveform[int(s.start * SAMPLE_RATE) : int(s.end * SAMPLE_RATE)]
+            for s in result.segments
+            if s.speaker == label
         ]
         chunks = [c for c in chunks if c.size > 0]
         if not chunks:
@@ -246,7 +254,7 @@ def name_diarized_speakers(
         if windows:
             by_label[label] = windows
 
-    rename: Dict[str, str] = {}
+    rename: dict[str, str] = {}
     for label, windows in by_label.items():
         centroid = np.mean(np.stack(windows, axis=0), axis=0)
         name = name_speaker(centroid, refs, thr=thr, margin=margin)

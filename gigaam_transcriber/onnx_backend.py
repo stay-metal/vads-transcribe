@@ -15,7 +15,6 @@ import glob
 import logging
 import os
 from pathlib import Path
-from typing import Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +34,7 @@ def _quantize_dir(onnx_dir: str) -> None:
         tmp = f + ".q.onnx"
         try:
             # Только MatMul: Conv→ConvInteger у onnxruntime-CPU без ядра (NOT_IMPLEMENTED)
-            quantize_dynamic(f, tmp, weight_type=QuantType.QInt8,
-                             op_types_to_quantize=["MatMul"])
+            quantize_dynamic(f, tmp, weight_type=QuantType.QInt8, op_types_to_quantize=["MatMul"])
             os.replace(tmp, f)
             logger.info(f"int8-квантизация: {os.path.basename(f)}")
         except Exception as e:
@@ -45,7 +43,7 @@ def _quantize_dir(onnx_dir: str) -> None:
                 os.remove(tmp)
 
 
-def ensure_onnx(model_name: str, int8: bool = False) -> Tuple[str, str]:
+def ensure_onnx(model_name: str, int8: bool = False) -> tuple[str, str]:
     """
     Гарантирует наличие ONNX-графа GigaAM (экспорт + опц. int8), с кэшированием.
 

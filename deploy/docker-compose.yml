@@ -1,0 +1,65 @@
+# DialogScribe — деплой одной коробкой (спека §11). NVIDIA Container Toolkit.
+# Инвариант: GPU держит РОВНО ОДИН процесс (gpu-worker, -k process -w 1).
+# Порты api/worker НЕ публикуются — наружу смотрит только nginx (TLS).
+
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  api:
+    build: ..
+    command: >
+      uvicorn gigaam_transcriber.server.app:create_app
+      --factory --host 0.0.0.0 --port 8000
+    expose:
+      - "8000"            # НЕ ports: наружу не публикуем
+    env_file: [.env]
+    volumes:
+      - data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/readyz')"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 180s   # длинный — пока тёплая модель не прогрелась
+    restart: unless-stopped
+
+  gpu-worker:
+    build: ..
+    # ЕДИНСТВЕННЫЙ держатель GPU. Лаунчер с boot-guard L5: при -w 2 / -k thread
+    # процесс падает ДО загрузки модели (а голый huey_consumer guard не вызывал).
+    command: python -m gigaam_transcriber.server.run_gpu_worker -k process -w 1
+    env_file: [.env]
+    volumes:
+      - data:/data
+      - model-cache:/root/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  io-worker:
+    build: ..
+    # Скачивание/поллер (без GPU): чтобы сетевой I/O не занимал GPU-слот.
+    command: huey_consumer gigaam_transcriber.server.tasks.io_huey -w 2
+    env_file: [.env]
+    volumes:
+      - data:/data
+    restart: unless-stopped
+
+volumes:
+  data:
+  model-cache:

@@ -7,24 +7,28 @@
 здесь текст НЕ меняется — строго surface-not-drop, кириллица verbatim (I1). Флаг —
 наблюдение для downstream/триажа, а не правка вывода GigaAM.
 """
-from __future__ import annotations
 
-from typing import List
+from __future__ import annotations
 
 # Известные фразы-галлюцинации GigaAM (титры/реклама, всплывают на тишине/музыке).
 HALLUCINATION_PHRASES = (
-    "субтитры сделал", "субтитры создавал", "продолжение следует",
-    "редактор субтитров", "корректор субтитров", "спасибо за просмотр",
-    "подписывайтесь на канал", "ставьте лайк",
+    "субтитры сделал",
+    "субтитры создавал",
+    "продолжение следует",
+    "редактор субтитров",
+    "корректор субтитров",
+    "спасибо за просмотр",
+    "подписывайтесь на канал",
+    "ставьте лайк",
 )
 
 
-def detect_quality_flags(text: str) -> List[str]:
+def detect_quality_flags(text: str) -> list[str]:
     """Флаги риска качества сегмента (НЕ меняет текст). Пустой/чистый текст → []."""
     low = text.strip().lower()
     if not low:
         return []
-    flags: List[str] = []
+    flags: list[str] = []
     if any(low.startswith(p) or low == p for p in HALLUCINATION_PHRASES):
         flags.append("hallucination_suspect")
     words = low.split()

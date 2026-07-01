@@ -9,12 +9,12 @@ RNN-T декод (``decode_with_confidence``) остаются в torch — по
 возвращает None, вызывающий откатывается на torch (``model.forward``). Не бросает никогда.
 Выход argmax-идентичен torch (encoded maxdiff ~1e-5), движок — лишь провенанс.
 """
+
 from __future__ import annotations
 
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional
 
 import numpy as np
 import torch
@@ -28,7 +28,7 @@ class OnnxEncoder:
     Препроцессор (mel) — в torch на устройстве модели; Conformer — в ORT (CPU); результат
     возвращается torch-тензорами на ``model._device``/``_dtype`` для неизменного декода."""
 
-    def __init__(self, session, in_names: List[str], out_names: List[str], np_dtype) -> None:
+    def __init__(self, session, in_names: list[str], out_names: list[str], np_dtype) -> None:
         self._sess = session
         self._in = in_names
         self._out = out_names
@@ -47,19 +47,16 @@ class OnnxEncoder:
         # ORT отдаёт CPU/fp32; torch-голова RNN-T живёт на model._device. Возвращаем encoded
         # на устройстве и в dtype модели — точный drop-in (иначе на mps/cuda joint падает
         # "Tensor on cpu but expected on mps"). На cpu .to(...) — no-op.
-        encoded = torch.from_numpy(np.ascontiguousarray(outs[0])).to(
-            model._device, model._dtype
-        )
+        encoded = torch.from_numpy(np.ascontiguousarray(outs[0])).to(model._device, model._dtype)
         encoded_len = (
-            torch.from_numpy(np.ascontiguousarray(outs[1]))
-            .long()
-            .reshape(-1)
-            .to(model._device)
+            torch.from_numpy(np.ascontiguousarray(outs[1])).long().reshape(-1).to(model._device)
         )
         return encoded, encoded_len
 
 
-def load_onnx_encoder(model, model_name: str, cache_dir=None, threads: int = 8) -> Optional[OnnxEncoder]:
+def load_onnx_encoder(
+    model, model_name: str, cache_dir=None, threads: int = 8
+) -> OnnxEncoder | None:
     """Экспорт (один раз, кэш) + загрузка энкодера GigaAM как ORT CPU-сессии.
 
     Возвращает ``OnnxEncoder`` или **None** при ЛЮБОЙ проблеме (вызывающий откатится на
@@ -67,8 +64,11 @@ def load_onnx_encoder(model, model_name: str, cache_dir=None, threads: int = 8) 
     try:
         import onnxruntime as rt
     except Exception as exc:  # noqa: BLE001
-        print(f"[onnx-encoder] onnxruntime недоступен ({exc}); torch-энкодер.",
-              file=sys.stderr, flush=True)
+        print(
+            f"[onnx-encoder] onnxruntime недоступен ({exc}); torch-энкодер.",
+            file=sys.stderr,
+            flush=True,
+        )
         return None
     try:
         cdir = Path(cache_dir) if cache_dir else _CACHE_DIR
@@ -96,6 +96,9 @@ def load_onnx_encoder(model, model_name: str, cache_dir=None, threads: int = 8) 
         print(f"[onnx-encoder] активен ({onnx_path.name}).", file=sys.stderr, flush=True)
         return OnnxEncoder(sess, in_names, out_names, np_dtype)
     except Exception as exc:  # noqa: BLE001
-        print(f"[onnx-encoder] не удалось подготовить ({exc}); torch-энкодер.",
-              file=sys.stderr, flush=True)
+        print(
+            f"[onnx-encoder] не удалось подготовить ({exc}); torch-энкодер.",
+            file=sys.stderr,
+            flush=True,
+        )
         return None

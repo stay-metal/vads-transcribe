@@ -6,12 +6,12 @@
 но устраняет повторный ASR при ре-прогоне/докатывании. Сегменты сериализуются через
 to_dict/from_dict; целостность — по file_hash (несовпадение → ре-транскрипция).
 """
+
 from __future__ import annotations
 
 import json
 import os
 from pathlib import Path
-from typing import Optional
 
 from .data_models import TranscriptionResult, TranscriptionSegment
 from .utils import get_file_hash
@@ -49,7 +49,7 @@ def write_manifest(result: TranscriptionResult, audio_path, manifest_path) -> Pa
     return manifest_path
 
 
-def load_manifest(manifest_path) -> Optional[dict]:
+def load_manifest(manifest_path) -> dict | None:
     p = Path(manifest_path)
     if not p.exists():
         return None
@@ -59,7 +59,7 @@ def load_manifest(manifest_path) -> Optional[dict]:
         return None
 
 
-def resume_result(manifest_path, audio_path) -> Optional[TranscriptionResult]:
+def resume_result(manifest_path, audio_path) -> TranscriptionResult | None:
     """Восстановить result из manifest, если он complete И file_hash совпадает. Иначе None."""
     m = load_manifest(manifest_path)
     if not m or not m.get("complete"):

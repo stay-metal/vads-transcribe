@@ -8,16 +8,31 @@ from gigaam_transcriber.l0 import build_l0, l0_sha256, render_md_from_l0, write_
 
 def _result(segs, source="/path/Дейли.m4a"):
     return TranscriptionResult(
-        text=" ".join(s.text for s in segs), segments=segs, duration=10,
-        language="ru", model_name="v3_e2e_rnnt", processing_time=1.0,
+        text=" ".join(s.text for s in segs),
+        segments=segs,
+        duration=10,
+        language="ru",
+        model_name="v3_e2e_rnnt",
+        processing_time=1.0,
         metadata={"source": source},
     )
 
 
 def test_build_l0_fields_and_meeting_from_source():
-    r = _result([TranscriptionSegment(text="привет", start=0, end=1, speaker="Спикер №1",
-                                      confidence=0.9, speaker_confidence=0.8, provenance="glossary",
-                                      flags=["x"])])
+    r = _result(
+        [
+            TranscriptionSegment(
+                text="привет",
+                start=0,
+                end=1,
+                speaker="Спикер №1",
+                confidence=0.9,
+                speaker_confidence=0.8,
+                provenance="glossary",
+                flags=["x"],
+            )
+        ]
+    )
     recs = build_l0(r)
     assert len(recs) == 1
     rec = recs[0]
@@ -31,19 +46,29 @@ def test_build_l0_fields_and_meeting_from_source():
 
 
 def test_confidence_fallback_to_speaker_confidence():
-    r = _result([TranscriptionSegment(text="а", start=0, end=1, speaker="S", speaker_confidence=0.6)])
+    r = _result(
+        [TranscriptionSegment(text="а", start=0, end=1, speaker="S", speaker_confidence=0.6)]
+    )
     assert build_l0(r)[0]["confidence"] == 0.6
 
 
 def test_skip_empty_text():
-    r = _result([TranscriptionSegment(text="  ", start=0, end=1),
-                 TranscriptionSegment(text="есть", start=1, end=2)])
+    r = _result(
+        [
+            TranscriptionSegment(text="  ", start=0, end=1),
+            TranscriptionSegment(text="есть", start=1, end=2),
+        ]
+    )
     assert len(build_l0(r)) == 1
 
 
 def test_ordinal_disambiguates_same_start():
-    r = _result([TranscriptionSegment(text="а", start=0, end=1, speaker="S"),
-                 TranscriptionSegment(text="б", start=0, end=1, speaker="S")])
+    r = _result(
+        [
+            TranscriptionSegment(text="а", start=0, end=1, speaker="S"),
+            TranscriptionSegment(text="б", start=0, end=1, speaker="S"),
+        ]
+    )
     recs = build_l0(r)
     assert recs[0]["id"] != recs[1]["id"]  # ordinal различает
 

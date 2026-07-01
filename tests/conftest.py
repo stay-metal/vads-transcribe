@@ -5,8 +5,8 @@
 import os
 import sys
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 
 import pytest
 
@@ -32,6 +32,7 @@ def has_gpu() -> bool:
     """Проверка наличия GPU."""
     try:
         import torch
+
         return torch.cuda.is_available()
     except ImportError:
         return False
@@ -53,7 +54,7 @@ def hf_token() -> str | None:
 def sample_transcription_segment():
     """Пример сегмента транскрипции."""
     from gigaam_transcriber import TranscriptionSegment
-    
+
     return TranscriptionSegment(
         text="Привет, как дела?",
         start=0.0,
@@ -66,7 +67,7 @@ def sample_transcription_segment():
 def sample_transcription_result(sample_transcription_segment):
     """Пример результата транскрипции."""
     from gigaam_transcriber import TranscriptionResult, TranscriptionSegment
-    
+
     segments = [
         sample_transcription_segment,
         TranscriptionSegment(
@@ -82,7 +83,7 @@ def sample_transcription_result(sample_transcription_segment):
             speaker="Спикер №2",
         ),
     ]
-    
+
     return TranscriptionResult(
         text="Привет, как дела? Отлично, спасибо! А у тебя как?",
         segments=segments,
@@ -96,15 +97,9 @@ def sample_transcription_result(sample_transcription_segment):
 
 def pytest_configure(config):
     """Конфигурация маркеров pytest."""
-    config.addinivalue_line(
-        "markers", "slow: marks tests as slow"
-    )
-    config.addinivalue_line(
-        "markers", "requires_gpu: marks tests that require GPU"
-    )
+    config.addinivalue_line("markers", "slow: marks tests as slow")
+    config.addinivalue_line("markers", "requires_gpu: marks tests that require GPU")
     config.addinivalue_line(
         "markers", "requires_hf_token: marks tests that require HuggingFace token"
     )
-    config.addinivalue_line(
-        "markers", "requires_model: marks tests that require GigaAM model"
-    )
+    config.addinivalue_line("markers", "requires_model: marks tests that require GigaAM model")

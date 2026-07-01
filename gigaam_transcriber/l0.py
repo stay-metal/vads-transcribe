@@ -12,20 +12,29 @@
 I1 (verbatim): текст переносится дословно (``str(...)`` без нормализации). Чистое ядро
 (`build_l0`/`l0_sha256`/`render_md_from_l0`) — без I/O; единственный сайд-эффект — `write_l0`.
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .data_models import DEFAULT_PROVENANCE, TranscriptionResult
 
 # Ключи L0-записи в каноническом порядке (стабильный diff/хэш).
 L0_FIELDS = (
-    "id", "meeting", "speaker", "start", "end",
-    "text", "confidence", "speaker_confidence", "provenance", "flags",
+    "id",
+    "meeting",
+    "speaker",
+    "start",
+    "end",
+    "text",
+    "confidence",
+    "speaker_confidence",
+    "provenance",
+    "flags",
 )
 
 
@@ -37,7 +46,7 @@ def _slug(value: object) -> str:
     return "_".join(text.replace(":", "_").split())
 
 
-def _meeting_name(result: TranscriptionResult, meeting: Optional[str] = None) -> str:
+def _meeting_name(result: TranscriptionResult, meeting: str | None = None) -> str:
     if meeting:
         return str(meeting)
     src = (result.metadata or {}).get("source")
@@ -46,14 +55,14 @@ def _meeting_name(result: TranscriptionResult, meeting: Optional[str] = None) ->
     return "meeting"
 
 
-def build_l0(result: TranscriptionResult, meeting: Optional[str] = None) -> List[Dict[str, Any]]:
+def build_l0(result: TranscriptionResult, meeting: str | None = None) -> list[dict[str, Any]]:
     """Построить L0-записи из сегментов — по одной на сегмент с непустым текстом. Чистая функция.
 
     ``confidence`` — акустический chunk-level (приоритет), иначе ``speaker_confidence``, иначе None.
     ``ordinal`` разводит сегменты с одинаковым ``start`` (устойчивость id). I1: text дословно."""
     name = _meeting_name(result, meeting)
-    records: List[Dict[str, Any]] = []
-    ordinals: Dict[float, int] = {}
+    records: list[dict[str, Any]] = []
+    ordinals: dict[float, int] = {}
     for seg in result.segments:
         text = str(seg.text or "")
         if not text.strip():
@@ -63,27 +72,29 @@ def build_l0(result: TranscriptionResult, meeting: Optional[str] = None) -> List
         ordinal = ordinals.get(start, 0)
         ordinals[start] = ordinal + 1
         conf = seg.confidence if seg.confidence is not None else seg.speaker_confidence
-        records.append({
-            "id": f"{name}:{start:.3f}:{_slug(seg.speaker)}:{ordinal}",
-            "meeting": name,
-            "speaker": seg.speaker,
-            "start": start,
-            "end": end,
-            "text": text,
-            "confidence": float(conf) if conf is not None else None,
-            "speaker_confidence": seg.speaker_confidence,
-            "provenance": seg.provenance or DEFAULT_PROVENANCE,
-            "flags": list(seg.flags or []),
-        })
+        records.append(
+            {
+                "id": f"{name}:{start:.3f}:{_slug(seg.speaker)}:{ordinal}",
+                "meeting": name,
+                "speaker": seg.speaker,
+                "start": start,
+                "end": end,
+                "text": text,
+                "confidence": float(conf) if conf is not None else None,
+                "speaker_confidence": seg.speaker_confidence,
+                "provenance": seg.provenance or DEFAULT_PROVENANCE,
+                "flags": list(seg.flags or []),
+            }
+        )
     return records
 
 
-def _canonical_json(records: List[Dict[str, Any]]) -> str:
+def _canonical_json(records: list[dict[str, Any]]) -> str:
     """Канонизированный JSON для хэша: sort_keys + компактные разделители, кириллица как есть."""
     return json.dumps(records, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-def l0_sha256(records: List[Dict[str, Any]]) -> str:
+def l0_sha256(records: list[dict[str, Any]]) -> str:
     """sha256 (hex) над канонизированным JSON L0 — детерминированный отпечаток целостности."""
     return hashlib.sha256(_canonical_json(records).encode("utf-8")).hexdigest()
 
@@ -93,9 +104,9 @@ def _format_time(seconds: float) -> str:
     return f"{whole // 3600:02}:{(whole % 3600) // 60:02}:{whole % 60:02}"
 
 
-def render_md_from_l0(records: List[Dict[str, Any]], meta: Optional[dict] = None) -> str:
+def render_md_from_l0(records: list[dict[str, Any]], meta: dict | None = None) -> str:
     """Собрать тело транскрипта из L0 («.md — чистая функция от L0»). Текст дословно (I1)."""
-    lines: List[str] = []
+    lines: list[str] = []
     title = (meta or {}).get("title")
     if title:
         lines += [f"# {title}", ""]
@@ -109,7 +120,7 @@ def render_md_from_l0(records: List[Dict[str, Any]], meta: Optional[dict] = None
     return "\n".join(lines).rstrip() + "\n"
 
 
-def write_l0(records: List[Dict[str, Any]], out_path: Path | str) -> Path:
+def write_l0(records: list[dict[str, Any]], out_path: Path | str) -> Path:
     """Записать L0 в ``<out>`` (jsonl, по объекту на строку) + sidecar ``<out>.sha256``.
 
     Атомарно (tmp + os.replace) — краш посреди записи не оставит усечённый L0."""
