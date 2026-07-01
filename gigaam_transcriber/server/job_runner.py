@@ -112,6 +112,9 @@ def process_job(settings: Settings, job_id: str, transcriber) -> None:
         # Не утекать абсолютные серверные пути клиенту (result.json отдаётся как есть).
         if isinstance(result.metadata, dict):
             result.metadata.pop("source", None)
+            # Зафиксировать фактический бэкенд диаризации (иначе UI-хедер пуст).
+            if job["mode"] == "single":
+                result.metadata.setdefault("diarization", params.get("diarization", "pyannote"))
 
         # L0-субстрат (opt-in): пишем сами — transcribe() без output_path его пропускает.
         # sha256 кладём в metadata ДО to_json() как verifiable-признак «L0 создан» для UI.

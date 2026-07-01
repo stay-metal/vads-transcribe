@@ -352,6 +352,17 @@ def test_metadata_source_not_leaked(tmp_path):
     assert "source" not in res.get("metadata", {})
 
 
+def test_single_metadata_records_diarization(tmp_path):
+    # F3: бэкенд диаризации фиксируется в metadata (иначе UI-хедер пуст).
+    c, _ = _make_with_settings(tmp_path, FakeTranscriber())
+    up = c.post("/api/uploads", files=[_file("mix.wav")]).json()
+    job_id = c.post(
+        "/api/jobs", json={"recording_id": up["recording_id"], "diarization": "none"}
+    ).json()["job_id"]
+    res = c.get(f"/api/jobs/{job_id}/result").json()
+    assert res["metadata"]["diarization"] == "none"
+
+
 def test_endpoint_coverage_list_audio_srt(tmp_path):
     c, _ = _make_with_settings(tmp_path, FakeTranscriber())
     up = c.post("/api/uploads", files=[_file("Алиса.wav"), _file("Боб.wav")]).json()
