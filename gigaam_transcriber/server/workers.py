@@ -14,8 +14,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Optional
 
 from .config import Settings
 
@@ -40,9 +40,9 @@ def assert_gpu_worker_config(worker_type: str, workers: int) -> None:
 
 def _default_transcriber_factory(settings: Settings):
     # Ленивый импорт: модель тянется только в gpu-воркере, не на уровне модуля.
-    from gigaam_transcriber import GigaAMTranscriber
-
     import os
+
+    from gigaam_transcriber import GigaAMTranscriber
 
     return GigaAMTranscriber(
         device=os.getenv("DIALOGSCRIBE_DEVICE", "auto"),
@@ -64,7 +64,7 @@ def clear_ready_flag(ready_flag_path: Path) -> None:
 
 def warm_up(
     settings: Settings,
-    transcriber_factory: Optional[Callable[[Settings], object]] = None,
+    transcriber_factory: Callable[[Settings], object] | None = None,
 ):
     """Прогреть тёплый singleton и выставить ready-флаг (для /readyz).
 

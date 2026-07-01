@@ -41,7 +41,7 @@ def test_repair_is_noop_on_cpu_intended():
 
     t._repair_device()
 
-    assert fake.moved_to == []           # модель никуда не двигаем
+    assert fake.moved_to == []  # модель никуда не двигаем
     assert t.device == "cpu"
     assert t._device_fell_back is False  # пер-джобовая пометка сброшена
 

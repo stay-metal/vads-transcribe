@@ -1,4 +1,5 @@
 """Расположение редактируемых конфигов (config/) — для глоссария и словарей lint."""
+
 from __future__ import annotations
 
 import os

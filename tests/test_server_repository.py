@@ -39,8 +39,13 @@ def test_job_lifecycle(tmp_path):
     assert job["started_at"] is not None  # проставлен при первом уходе из queued
 
     repo.finish_job_ok(
-        db, job_id, result_json_path="/o/r.json", audio_path="/o/a.wav",
-        duration_sec=12.0, processing_time_sec=3.0, device_fallback=True,
+        db,
+        job_id,
+        result_json_path="/o/r.json",
+        audio_path="/o/a.wav",
+        duration_sec=12.0,
+        processing_time_sec=3.0,
+        device_fallback=True,
     )
     job = repo.get_job(db, job_id)
     assert job["state"] == "done"
@@ -105,8 +110,15 @@ def test_reconcile_orphaned_jobs(tmp_path):
     repo.update_job_progress(db, running, "asr", 50)
     done = repo.create_job(db, mode="single")
     repo.update_job_progress(db, done, "asr", 50)
-    repo.finish_job_ok(db, done, result_json_path=None, audio_path=None,
-                       duration_sec=1, processing_time_sec=1, device_fallback=False)
+    repo.finish_job_ok(
+        db,
+        done,
+        result_json_path=None,
+        audio_path=None,
+        duration_sec=1,
+        processing_time_sec=1,
+        device_fallback=False,
+    )
 
     n = repo.reconcile_orphaned_jobs(db)
     assert n == 1  # только running помечен
@@ -122,8 +134,15 @@ def test_terminal_state_not_overwritten(tmp_path):
     repo.cancel_job_if_queued(db, job_id)
     # попытка прогресса/финала поверх canceled — игнорируется
     repo.update_job_progress(db, job_id, "asr", 50)
-    repo.finish_job_ok(db, job_id, result_json_path=None, audio_path=None,
-                       duration_sec=1, processing_time_sec=1, device_fallback=False)
+    repo.finish_job_ok(
+        db,
+        job_id,
+        result_json_path=None,
+        audio_path=None,
+        duration_sec=1,
+        processing_time_sec=1,
+        device_fallback=False,
+    )
     assert repo.get_job(db, job_id)["state"] == "canceled"
 
 
@@ -132,4 +151,4 @@ def test_list_jobs_orders_recent_first(tmp_path):
     ids = [repo.create_job(db, mode="single") for _ in range(3)]
     listed = repo.list_jobs(db)
     assert len(listed) == 3
-    assert set(j["id"] for j in listed) == set(ids)
+    assert {j["id"] for j in listed} == set(ids)

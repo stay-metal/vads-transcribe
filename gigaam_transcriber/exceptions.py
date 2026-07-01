@@ -5,12 +5,13 @@
 
 class TranscriberError(Exception):
     """Базовое исключение для всех ошибок транскрибера."""
+
     pass
 
 
 class AudioTooShortError(TranscriberError):
     """Аудио слишком короткое для обработки."""
-    
+
     def __init__(self, duration: float, min_duration: float = 0.1):
         self.duration = duration
         self.min_duration = min_duration
@@ -22,7 +23,7 @@ class AudioTooShortError(TranscriberError):
 
 class AudioTooLongError(TranscriberError):
     """Аудио превышает лимит без использования longform."""
-    
+
     def __init__(self, duration: float, max_duration: float = 25.0):
         self.duration = duration
         self.max_duration = max_duration
@@ -35,10 +36,10 @@ class AudioTooLongError(TranscriberError):
 
 class UnsupportedFormatError(TranscriberError):
     """Неподдерживаемый формат файла."""
-    
-    SUPPORTED_AUDIO = {'.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac', '.wma', '.opus'}
-    SUPPORTED_VIDEO = {'.mp4', '.mkv', '.avi', '.mov', '.webm', '.wmv', '.flv'}
-    
+
+    SUPPORTED_AUDIO = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".wma", ".opus"}
+    SUPPORTED_VIDEO = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".wmv", ".flv"}
+
     def __init__(self, file_format: str):
         self.file_format = file_format
         all_supported = self.SUPPORTED_AUDIO | self.SUPPORTED_VIDEO
@@ -50,7 +51,7 @@ class UnsupportedFormatError(TranscriberError):
 
 class DiarizationError(TranscriberError):
     """Ошибка при диаризации спикеров."""
-    
+
     def __init__(self, message: str, cause: Exception = None):
         self.cause = cause
         full_message = f"Ошибка диаризации: {message}"
@@ -61,7 +62,7 @@ class DiarizationError(TranscriberError):
 
 class HFTokenMissingError(DiarizationError):
     """HuggingFace токен не установлен для pyannote."""
-    
+
     def __init__(self):
         super().__init__(
             "HF_TOKEN не установлен. Для диаризации необходим токен HuggingFace. "
@@ -71,7 +72,7 @@ class HFTokenMissingError(DiarizationError):
 
 class ModelLoadError(TranscriberError):
     """Ошибка при загрузке модели."""
-    
+
     def __init__(self, model_name: str, cause: Exception = None):
         self.model_name = model_name
         self.cause = cause
@@ -83,11 +84,11 @@ class ModelLoadError(TranscriberError):
 
 class AudioProcessingError(TranscriberError):
     """Ошибка при обработке аудио."""
-    
+
     def __init__(self, message: str, file_path: str = None, cause: Exception = None):
         self.file_path = file_path
         self.cause = cause
-        full_message = f"Ошибка обработки аудио"
+        full_message = "Ошибка обработки аудио"
         if file_path:
             full_message += f" ({file_path})"
         full_message += f": {message}"
@@ -98,7 +99,7 @@ class AudioProcessingError(TranscriberError):
 
 class FFmpegNotFoundError(AudioProcessingError):
     """FFmpeg не найден в системе."""
-    
+
     def __init__(self):
         super().__init__(
             "FFmpeg не найден. Установите ffmpeg и добавьте в PATH. "
@@ -108,7 +109,7 @@ class FFmpegNotFoundError(AudioProcessingError):
 
 class FileNotFoundError(TranscriberError):
     """Файл не найден."""
-    
+
     def __init__(self, file_path: str):
         self.file_path = file_path
         super().__init__(f"Файл не найден: {file_path}")
@@ -116,7 +117,7 @@ class FileNotFoundError(TranscriberError):
 
 class EmptyFileError(TranscriberError):
     """Файл пустой."""
-    
+
     def __init__(self, file_path: str):
         self.file_path = file_path
         super().__init__(f"Файл пустой: {file_path}")
@@ -124,7 +125,7 @@ class EmptyFileError(TranscriberError):
 
 class EmptyAudioError(TranscriberError):
     """Аудио не содержит речи или полностью тихое."""
-    
+
     def __init__(self, file_path: str = None):
         self.file_path = file_path
         message = "Аудио не содержит распознаваемой речи"

@@ -74,7 +74,15 @@ def test_run_gpu_worker_boot_guard_aborts_multi_worker():
     import sys
 
     r = subprocess.run(
-        [sys.executable, "-m", "gigaam_transcriber.server.run_gpu_worker", "-k", "process", "-w", "2"],
+        [
+            sys.executable,
+            "-m",
+            "gigaam_transcriber.server.run_gpu_worker",
+            "-k",
+            "process",
+            "-w",
+            "2",
+        ],
         capture_output=True,
         text=True,
         timeout=30,
@@ -88,7 +96,15 @@ def test_run_gpu_worker_boot_guard_aborts_thread():
     import sys
 
     r = subprocess.run(
-        [sys.executable, "-m", "gigaam_transcriber.server.run_gpu_worker", "-k", "thread", "-w", "1"],
+        [
+            sys.executable,
+            "-m",
+            "gigaam_transcriber.server.run_gpu_worker",
+            "-k",
+            "thread",
+            "-w",
+            "1",
+        ],
         capture_output=True,
         text=True,
         timeout=30,

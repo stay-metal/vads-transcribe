@@ -50,11 +50,12 @@ def test_discover_camelcase_prefix_and_collision(tmp_path):
     for fn in ["AudioQuux51.m4a", "audioQuux52.m4a"]:
         (rec / fn).write_bytes(b"")
     tracks = GigaAMTranscriber.discover_route_a_tracks(tmp_path)
-    assert list(tracks.keys()) == ["Quux"]            # 'Audio' снят несмотря на регистр
-    assert "Audio" not in " ".join(tracks.keys())     # префикс не протёк в имя
+    assert list(tracks.keys()) == ["Quux"]  # 'Audio' снят несмотря на регистр
+    assert "Audio" not in " ".join(tracks.keys())  # префикс не протёк в имя
 
 
 # --- L2: изоляция ошибок по дорожкам ------------------------------------------
+
 
 def test_route_a_isolates_failing_track(monkeypatch):
     """Битая дорожка помечается в metadata, остальные дорожки выживают (не падаем)."""
@@ -66,9 +67,7 @@ def test_route_a_isolates_failing_track(monkeypatch):
         return _fake_result()
 
     monkeypatch.setattr(t, "_transcribe_audio", fake)
-    res = t.transcribe_route_a(
-        {"Алексей": "good1.m4a", "Иван": "bad.m4a", "Павел": "good2.m4a"}
-    )
+    res = t.transcribe_route_a({"Алексей": "good1.m4a", "Иван": "bad.m4a", "Павел": "good2.m4a"})
     assert {s.speaker for s in res.segments} == {"Алексей", "Павел"}
     failed = res.metadata["failed_tracks"]
     assert [f["name"] for f in failed] == ["Иван"]
@@ -79,7 +78,8 @@ def test_route_a_all_tracks_failing_does_not_raise(monkeypatch):
     """Даже если падают ВСЕ дорожки — возвращаем пустой результат, а не исключение."""
     t = GigaAMTranscriber(device="cpu")
     monkeypatch.setattr(
-        t, "_transcribe_audio",
+        t,
+        "_transcribe_audio",
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     res = t.transcribe_route_a({"A": "a.m4a", "B": "b.m4a"})
@@ -88,6 +88,7 @@ def test_route_a_all_tracks_failing_does_not_raise(monkeypatch):
 
 
 # --- L3: device_fallback на пути Route A ---------------------------------------
+
 
 def test_route_a_surfaces_device_fallback(monkeypatch):
     """GPU→CPU откол на основном пути виден в metadata.device_fallback."""
@@ -122,6 +123,7 @@ def test_route_a_resets_onnx_encoder_flag(monkeypatch):
 
 # --- L4: per-track progress_callback ------------------------------------------
 
+
 def test_route_a_progress_callback(monkeypatch):
     t = GigaAMTranscriber(device="cpu")
     monkeypatch.setattr(t, "_transcribe_audio", lambda *a, **k: _fake_result())
@@ -137,7 +139,8 @@ def test_route_a_progress_callback_fires_for_failed_track(monkeypatch):
     """Прогресс тикает и для пропущенной дорожки — бар не «застревает» на сбое."""
     t = GigaAMTranscriber(device="cpu")
     monkeypatch.setattr(
-        t, "_transcribe_audio",
+        t,
+        "_transcribe_audio",
         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")),
     )
     calls = []

@@ -74,9 +74,7 @@ def poll_yandex_task() -> None:
     client = build_client_from_settings(settings)
     if client is None:
         return
-    poll_ingest_sources(
-        settings, client, enqueue_io=lambda s, k, t: pull_recording(s, k, t)
-    )
+    poll_ingest_sources(settings, client, enqueue_io=lambda s, k, t: pull_recording(s, k, t))
 
 
 @io_huey.task()
@@ -92,6 +90,12 @@ def pull_recording(surrogate_id: str, kind: str, remote_tracks: list) -> str:
     token = decrypt(settings.fernet_key, auth["token_enc"]) if auth else None
     if not token:
         return surrogate_id
-    ingest_pull(settings, surrogate_id, kind, remote_tracks, YaDiskClient(token),
-                enqueue_gpu=lambda job_id: run_job(job_id))
+    ingest_pull(
+        settings,
+        surrogate_id,
+        kind,
+        remote_tracks,
+        YaDiskClient(token),
+        enqueue_gpu=lambda job_id: run_job(job_id),
+    )
     return surrogate_id

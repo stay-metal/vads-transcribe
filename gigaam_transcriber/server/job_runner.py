@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from . import media
 from .config import Settings
@@ -71,7 +71,7 @@ def process_job(settings: Settings, job_id: str, transcriber) -> None:
         fail_job(db, job_id, "no_tracks", "У записи нет дорожек")
         return
 
-    params: Dict[str, Any] = job["params"]
+    params: dict[str, Any] = job["params"]
     output_dir = Path(job["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -153,7 +153,8 @@ def process_job(settings: Settings, job_id: str, transcriber) -> None:
             audio_out = None
 
         finish_job_ok(
-            db, job_id,
+            db,
+            job_id,
             result_json_path=str(result_json),
             audio_path=audio_out,
             duration_sec=getattr(result, "duration", None),

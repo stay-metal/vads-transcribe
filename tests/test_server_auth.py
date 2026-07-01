@@ -38,9 +38,7 @@ def client(settings):
 
 
 def _login(client, username="admin", password=PASSWORD):
-    return client.post(
-        "/api/auth/login", data={"username": username, "password": password}
-    )
+    return client.post("/api/auth/login", data={"username": username, "password": password})
 
 
 # --------------------------------------------------------------------------- #

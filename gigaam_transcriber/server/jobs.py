@@ -11,10 +11,9 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 from . import media
@@ -38,9 +37,9 @@ router = APIRouter()
 class CreateJobIn(BaseModel):
     recording_id: str
     diarization: str = "pyannote"  # для single; route_a игнорирует
-    num_speakers: Optional[int] = None
-    min_speakers: Optional[int] = None
-    max_speakers: Optional[int] = None
+    num_speakers: int | None = None
+    min_speakers: int | None = None
+    max_speakers: int | None = None
     glossary: bool = True
     min_segment_gap: float = 0.5
     # opt-in качество/бэкенд — ТОЛЬКО single-путь (route_a их форсит/игнорирует, спека §4.1)
@@ -50,7 +49,7 @@ class CreateJobIn(BaseModel):
     backend: str = "torch"
     onnx_int8: bool = False
     voiceprint: bool = False
-    voiceprint_gallery: Optional[str] = None
+    voiceprint_gallery: str | None = None
     emit_l0: bool = False
 
 
@@ -77,7 +76,9 @@ def _public_job(job: dict) -> dict:
 # submit
 # --------------------------------------------------------------------------- #
 @router.post("/api/jobs")
-def submit_job(payload: CreateJobIn, request: Request, user: str = Depends(require_session)) -> dict:
+def submit_job(
+    payload: CreateJobIn, request: Request, user: str = Depends(require_session)
+) -> dict:
     settings = request.app.state.settings
     db = settings.db_path
     rec = get_recording(db, payload.recording_id)
@@ -116,7 +117,8 @@ def submit_job(payload: CreateJobIn, request: Request, user: str = Depends(requi
     output_dir = data_dir / "outputs" / job_id
     work_dir = data_dir / "work" / job_id
     set_job_dirs(
-        db, job_id,
+        db,
+        job_id,
         work_dir=str(work_dir),
         output_dir=str(output_dir),
         manifest_path=str(output_dir / "manifest.json"),

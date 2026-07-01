@@ -9,7 +9,6 @@ POST /api/recordings/{id}/discover-tracks — подтвердить: правк
 from __future__ import annotations
 
 import unicodedata
-from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -26,7 +25,7 @@ class TrackIn(BaseModel):
 
 
 class ConfirmTracksIn(BaseModel):
-    tracks: List[TrackIn]
+    tracks: list[TrackIn]
 
 
 @router.get("/api/recordings/{rec_id}/discover-tracks")
@@ -56,7 +55,7 @@ def confirm_tracks(
         raise HTTPException(404, "Запись не найдена")
 
     original = rec["tracks"]
-    confirmed: List[dict] = []
+    confirmed: list[dict] = []
     seen_names = set()
     seen_ids = set()
     for t in payload.tracks:

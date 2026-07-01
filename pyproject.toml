@@ -132,7 +132,13 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "B", "C4", "UP"]
-ignore = ["E501", "B008"]
+# E501/B008 — длина строк/Depends-в-дефолтах (FastAPI-идиома).
+# E402 — намеренные lazy-imports (os.environ.setdefault до `import torch`, тяжёлые
+#   модули внутри функций — см. .claude/rules/python-conventions.md).
+# B904 — HTTPException/UsageError в except намеренно без `from` (не течёт внутренняя причина).
+# N806 — ML-код использует заглавные локальные имена для тензоров/матриц.
+# E741 — единичный тестовый счётчик.
+ignore = ["E501", "B008", "E402", "B904", "N806", "E741"]
 
 [tool.mypy]
 python_version = "3.10"

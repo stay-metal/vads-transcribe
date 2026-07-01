@@ -321,9 +321,7 @@ def test_batch_two_files(runner, tmp_path):
     f2 = tmp_path / "b.wav"
     f1.write_bytes(b"\x00")
     f2.write_bytes(b"\x00")
-    res = runner.invoke(
-        dcli.cli, ["batch", str(f1), str(f2), "-o", str(tmp_path / "out")]
-    )
+    res = runner.invoke(dcli.cli, ["batch", str(f1), str(f2), "-o", str(tmp_path / "out")])
     assert res.exit_code == 0, res.output
     assert FakeTranscriber.last_batch["input_paths"] == [str(f1), str(f2)]
     assert "Успешно: 2" in res.output
@@ -379,9 +377,7 @@ def test_gallery_build(runner, tmp_path, monkeypatch):
         Path(path).write_text("{}")
         return path
 
-    monkeypatch.setattr(
-        "gigaam_transcriber.voiceprint.build_gallery_from_tracks", fake_build
-    )
+    monkeypatch.setattr("gigaam_transcriber.voiceprint.build_gallery_from_tracks", fake_build)
     monkeypatch.setattr("gigaam_transcriber.voiceprint.save_gallery", fake_save)
 
     res = runner.invoke(
@@ -449,9 +445,7 @@ def test_gallery_rm_rejects_traversal(runner, tmp_path, monkeypatch, bad):
 
 def test_gallery_build_rejects_traversal(runner, tmp_path, monkeypatch):
     monkeypatch.setenv("DIALOGSCRIBE_GALLERY_DIR", str(tmp_path / "gal"))
-    res = runner.invoke(
-        dcli.cli, ["gallery", "build", "/tmp/evil", "--track", "A=/x/a.m4a"]
-    )
+    res = runner.invoke(dcli.cli, ["gallery", "build", "/tmp/evil", "--track", "A=/x/a.m4a"])
     assert res.exit_code == 2
     assert "Недопустимое имя" in res.output
 

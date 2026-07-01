@@ -22,16 +22,15 @@ Best practice (NeMo, см. tmp/research_notes.md): exp(mean(token_logprob)) = г
 
 Каждый logprob ∈ (−inf, 0] (log-вероятность ≤ 0).
 """
+
 from __future__ import annotations
 
 import math
-from typing import List, Optional, Tuple
 
 import torch
-from torch import Tensor
-
 from gigaam.decoder import RNNTHead
 from gigaam.decoding import RNNTGreedyDecoding
+from torch import Tensor
 
 
 class ConfidentRNNTGreedyDecoding(RNNTGreedyDecoding):
@@ -46,22 +45,22 @@ class ConfidentRNNTGreedyDecoding(RNNTGreedyDecoding):
     @torch.inference_mode()
     def decode(  # type: ignore[override]
         self,
-        head: "RNNTHead",
+        head: RNNTHead,
         encoded: Tensor,
         enc_len: Tensor,
-    ) -> List[Tuple[str, List[int], List[int], List[float]]]:
+    ) -> list[tuple[str, list[int], list[int], list[float]]]:
         """RNN-T greedy decode + per-token logprob (выровнен с token_frames, ≤ 0)."""
         x = encoded.transpose(1, 2)  # [B, T, D]
         B, T, _ = x.shape
         device = x.device
 
-        hyps: List[List[int]] = [[] for _ in range(B)]
-        token_frames: List[List[int]] = [[] for _ in range(B)]
-        token_logprobs: List[List[float]] = [[] for _ in range(B)]
-        last_label: List[Optional[Tensor]] = [None] * B
-        dec_state: List[Optional[Tuple[Tensor, Tensor]]] = [None] * B
+        hyps: list[list[int]] = [[] for _ in range(B)]
+        token_frames: list[list[int]] = [[] for _ in range(B)]
+        token_logprobs: list[list[float]] = [[] for _ in range(B)]
+        last_label: list[Tensor | None] = [None] * B
+        dec_state: list[tuple[Tensor, Tensor] | None] = [None] * B
 
-        def emit_batch(batch_idx: List[int], t: int, fresh: bool) -> List[int]:
+        def emit_batch(batch_idx: list[int], t: int, fresh: bool) -> list[int]:
             """Один батч-шаг predictor+joint; возвращает сэмплы с non-blank эмиссией."""
             idx = torch.tensor(batch_idx, device=device, dtype=torch.long)
             f = x[idx, t : t + 1, :]  # [b, 1, D]
@@ -71,9 +70,7 @@ class ConfidentRNNTGreedyDecoding(RNNTGreedyDecoding):
             else:
                 labels = torch.cat([last_label[i] for i in batch_idx], dim=0)  # [b, 1]
                 state = self._cat_states([dec_state[i] for i in batch_idx])
-                g, hidden = head.decoder.predict(
-                    labels, state, batch_size=len(batch_idx)
-                )
+                g, hidden = head.decoder.predict(labels, state, batch_size=len(batch_idx))
 
             # joint уже отдаёт log-вероятности (RNNTJoint.joint -> .log_softmax(-1),
             # GigaAM/gigaam/decoder.py:47): повторный log_softmax не нужен. argmax по
@@ -134,11 +131,11 @@ class ConfidentRNNTGreedyDecoding(RNNTGreedyDecoding):
 
         return [
             (self.tokenizer.decode(h), h, tf, lp)
-            for h, tf, lp in zip(hyps, token_frames, token_logprobs)
+            for h, tf, lp in zip(hyps, token_frames, token_logprobs, strict=False)
         ]
 
 
-def chunk_confidence(token_logprobs) -> Optional[float]:
+def chunk_confidence(token_logprobs) -> float | None:
     """Confidence чанка ∈ (0, 1] из per-token logprob'ов: ``exp(mean(logprob))`` —
     средняя геометрическая вероятность эмитированного токена (длинонормированный продукт).
 
@@ -149,25 +146,26 @@ def chunk_confidence(token_logprobs) -> Optional[float]:
     return float(math.exp(sum(token_logprobs) / len(token_logprobs)))
 
 
-def as_confident(decoding: "RNNTGreedyDecoding") -> "ConfidentRNNTGreedyDecoding":
+def as_confident(decoding: RNNTGreedyDecoding) -> ConfidentRNNTGreedyDecoding:
     """Обернуть готовый ``RNNTGreedyDecoding`` в confident-субкласс БЕЗ ре-инстанцирования.
 
     Новый объект делит ``tokenizer``/``blank_id``/``max_symbols`` исходного декодера (копия
     ``__dict__``) — SentencePiece/словарь не грузятся повторно. Исходный ``decoding`` НЕ
     мутируется (его ``__class__`` не меняется)."""
     if not isinstance(decoding, RNNTGreedyDecoding):
-        raise TypeError(
-            f"decoding must be RNNTGreedyDecoding, got {type(decoding).__name__}"
-        )
+        raise TypeError(f"decoding must be RNNTGreedyDecoding, got {type(decoding).__name__}")
     conf = ConfidentRNNTGreedyDecoding.__new__(ConfidentRNNTGreedyDecoding)
     conf.__dict__.update(decoding.__dict__)
     return conf
 
 
 def decode_with_confidence(
-    model, encoded: Tensor, encoded_len: Tensor, wav_lens: Tensor,
+    model,
+    encoded: Tensor,
+    encoded_len: Tensor,
+    wav_lens: Tensor,
     word_timestamps: bool = False,
-) -> List[Tuple[str, Optional[float], object]]:
+) -> list[tuple[str, float | None, object]]:
     """Декод чанков → ``(text, confidence, words)``; текст **бит-в-бит** как у ``model._decode``.
 
     Если ``model.decoding`` — ``RNNTGreedyDecoding`` (greedy RNN-T, как у v3_e2e_rnnt),
@@ -185,6 +183,7 @@ def decode_with_confidence(
             words = None
             if word_timestamps:
                 from gigaam.timestamps_utils import compute_frame_shift, frames_to_words
+
                 frame_shift = compute_frame_shift(
                     int(wav_lens[i].item()), int(encoded_len[i].item())
                 )

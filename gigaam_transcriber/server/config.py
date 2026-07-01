@@ -9,11 +9,10 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 # Безопасные дефолты лимитов: записи Ponimaiu разные (~30 мин…час+, неск. спикеров)
 # → щедрые предохранители от abuse, а не типичный размер (спека §8/решения).
-_GB = 1024 ** 3
+_GB = 1024**3
 DEFAULT_MAX_FILE_SIZE = 3 * _GB
 DEFAULT_MAX_RECORDING_TOTAL = 5 * _GB
 DEFAULT_MAX_DURATION_SEC = 4 * 3600
@@ -48,8 +47,8 @@ class Settings:
 
     # --- директории/данные ---
     data_dir: Path = field(default_factory=lambda: Path.home() / ".dialogscribe")
-    db_path: Optional[Path] = None  # app.sqlite; None → data_dir/app.sqlite
-    ready_flag_path: Optional[Path] = None  # флаг тёплой модели; None → data_dir/worker.ready
+    db_path: Path | None = None  # app.sqlite; None → data_dir/app.sqlite
+    ready_flag_path: Path | None = None  # флаг тёплой модели; None → data_dir/worker.ready
 
     # --- сетевые/безопасность ---
     cookie_secure: bool = True  # cookie Secure (отключать только в dev по HTTP)
@@ -78,7 +77,7 @@ class Settings:
         self.ready_flag_path = Path(self.ready_flag_path)
 
     @classmethod
-    def from_env(cls) -> "Settings":
+    def from_env(cls) -> Settings:
         data_dir = Path(os.getenv("DIALOGSCRIBE_DATA_DIR", str(Path.home() / ".dialogscribe")))
         return cls(
             user=os.getenv("DIALOGSCRIBE_USER", "admin"),

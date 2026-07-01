@@ -1,7 +1,6 @@
 """M2 hardening (находки ревью): throttle headroom/backoff/eviction, non-ASCII
 username, auto-bump epoch при смене пароля, cookie-флаги."""
 
-import pytest
 from fastapi.testclient import TestClient
 
 from gigaam_transcriber.server.app import create_app
@@ -13,15 +12,15 @@ PASSWORD = "correct-horse-battery-staple"
 
 
 def _settings(tmp_path, **over):
-    base = dict(
-        user="admin",
-        password_hash=hash_password(PASSWORD),
-        session_key="session-key-aaaaaaaaaaaaaaaa",
-        fernet_key="fernet-key-bbbbbbbbbbbbbbbb",
-        data_dir=tmp_path,
-        cookie_secure=False,
-        require_https=False,
-    )
+    base = {
+        "user": "admin",
+        "password_hash": hash_password(PASSWORD),
+        "session_key": "session-key-aaaaaaaaaaaaaaaa",
+        "fernet_key": "fernet-key-bbbbbbbbbbbbbbbb",
+        "data_dir": tmp_path,
+        "cookie_secure": False,
+        "require_https": False,
+    }
     base.update(over)
     return Settings(**base)
 
@@ -54,7 +53,9 @@ def test_throttle_exponential_backoff_grows():
 
 
 def test_throttle_backoff_capped():
-    t = LoginThrottle(max_failures=1, lockout_seconds=10, global_max_failures=10_000, max_lockout_seconds=15)
+    t = LoginThrottle(
+        max_failures=1, lockout_seconds=10, global_max_failures=10_000, max_lockout_seconds=15
+    )
     now = 0
     for _ in range(10):
         t.record_failure("x", now=now)

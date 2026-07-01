@@ -14,26 +14,27 @@ GigaAM неприкосновенна (I1): меняются лишь курир
 Ядро (`lint`/`alias_map`/`suffixable_aliases`/`apply_glossary` и константы) перенесено
 из custom/zoom_transcriber/glossary.py без изменений логики.
 """
+
 from __future__ import annotations
 
 import json
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
 
 from ._paths import config_dir
 from .data_models import TranscriptionSegment, merge_provenance
 
+
 # Пути резолвятся в момент ВЫЗОВА (config_dir() читает GIGAAM_TRANSCRIBER_CONFIG лениво) —
 # иначе биндинг на import-time замораживал бы их, и env-override после import игнорировался.
-def load_glossary(path: Optional[Path] = None) -> dict:
+def load_glossary(path: Path | None = None) -> dict:
     path = path or (config_dir() / "glossary.json")
     if not path.exists():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _load_word_set(path: Path) -> Set[str]:
+def _load_word_set(path: Path) -> set[str]:
     if not path.exists():
         return set()
     return {
@@ -43,16 +44,16 @@ def _load_word_set(path: Path) -> Set[str]:
     }
 
 
-def load_ru_words(path: Optional[Path] = None) -> Set[str]:
+def load_ru_words(path: Path | None = None) -> set[str]:
     return _load_word_set(path or (config_dir() / "russian_words.txt"))
 
 
-def load_en_words(path: Optional[Path] = None) -> Set[str]:
+def load_en_words(path: Path | None = None) -> set[str]:
     """Настоящие английские слова — запрещены как term-алиас (страж I1, см. english_words.txt)."""
     return _load_word_set(path or (config_dir() / "english_words.txt"))
 
 
-def lint(glossary: dict, ru_words: Set[str], en_words: Optional[Set[str]] = None) -> List[str]:
+def lint(glossary: dict, ru_words: set[str], en_words: set[str] | None = None) -> list[str]:
     """Term-алиасы, совпадающие с настоящим словом (русским ИЛИ английским) — запрещены (I1)."""
     if en_words is None:
         en_words = load_en_words()
@@ -71,8 +72,8 @@ def _people_text_safe(alias: str) -> bool:
     return not any(_CYR_INITIAL_RE.match(tok) for tok in alias.split())
 
 
-def alias_map(glossary: dict) -> Dict[str, str]:
-    m: Dict[str, str] = {}
+def alias_map(glossary: dict) -> dict[str, str]:
+    m: dict[str, str] = {}
     for k, v in glossary.get("terms", {}).items():
         if not k.startswith("_"):
             m[k.lower()] = v
@@ -93,19 +94,31 @@ _SUFFIX_EXCLUDED_ALIASES = frozenset({"диалого", "реакт"})
 # «en-термин по падежу»: склонённый кир. term-алиас канонизируем в латиницу ТОЛЬКО при ИМЕННОМ
 # падежном хвосте (существительное). Глагольный хвост → verbatim (I1). «коммит/коммита/коммитом»
 # → canon, «коммитить/коммитят/коммитил» → по-русски.
-_NOUN_CASE_TAILS = frozenset({
-    "",
-    "а", "у", "е", "ы", "ом", "ем", "ей",
-    "ов", "ев", "ам", "ах", "ами",
-})
+_NOUN_CASE_TAILS = frozenset(
+    {
+        "",
+        "а",
+        "у",
+        "е",
+        "ы",
+        "ом",
+        "ем",
+        "ей",
+        "ов",
+        "ев",
+        "ам",
+        "ах",
+        "ами",
+    }
+)
 # Основа на шипящую (ж/ч/ш/щ) или «й»: глагольное 1sg без мутации согласной («мёрж»→«мёржу»),
 # хвост «-у»/«-ю» неоднозначен (= дат. падеж) → НЕ канонизируем такие.
 _HUSHING_FINAL = ("ж", "ч", "ш", "щ", "й")
 
 
-def suffixable_aliases(glossary: dict) -> Set[str]:
+def suffixable_aliases(glossary: dict) -> set[str]:
     """Кир. term-алиасы (НЕ people, len>=4), к которым правомерен падежный хвост."""
-    out: Set[str] = set()
+    out: set[str] = set()
     for k in glossary.get("terms", {}):
         if k.startswith("_"):
             continue
@@ -119,9 +132,9 @@ def suffixable_aliases(glossary: dict) -> Set[str]:
 
 def apply_glossary(
     text: str,
-    amap: Dict[str, str],
-    suffixable: Optional[Set[str]] = None,
-) -> Tuple[str, int]:
+    amap: dict[str, str],
+    suffixable: set[str] | None = None,
+) -> tuple[str, int]:
     """Заменить все алиасы на канонические формы за один проход (идемпотентно).
 
     Латинские алиасы — строго по границе слова. Term-алиасы из ``suffixable`` (кириллица,
@@ -132,14 +145,11 @@ def apply_glossary(
         return text, 0
     suffixable = suffixable or set()
     aliases = sorted(amap.keys(), key=len, reverse=True)  # длинные раньше коротких
-    parts = [
-        re.escape(a) + (r"[а-яё]{0,3}" if a in suffixable else "")
-        for a in aliases
-    ]
+    parts = [re.escape(a) + (r"[а-яё]{0,3}" if a in suffixable else "") for a in aliases]
     pattern = re.compile(r"(?<!\w)(" + "|".join(parts) + r")(?!\w)", re.IGNORECASE)
     count = 0
 
-    def repl(mo: "re.Match[str]") -> str:
+    def repl(mo: re.Match[str]) -> str:
         nonlocal count
         whole = mo.group(0)
         lowered = whole.lower()
@@ -153,13 +163,13 @@ def apply_glossary(
         if canon is None:
             return whole
         if a in suffixable:
-            tail = lowered[len(a):]
+            tail = lowered[len(a) :]
             if tail not in _NOUN_CASE_TAILS:
                 return whole  # глагольный/иной хвост → verbatim (I1)
             if tail in ("у", "ю") and a.endswith(_HUSHING_FINAL):
                 return whole  # шипящая/й-основа: «-у» неоднозначно → verbatim
         # Идемпотентность: скип, только если матч ПОЛНОСТЬЮ внутри уже стоящего канона.
-        if len(canon) >= len(whole) and mo.string[mo.start():mo.start() + len(canon)] == canon:
+        if len(canon) >= len(whole) and mo.string[mo.start() : mo.start() + len(canon)] == canon:
             return whole
         count += 1
         return canon
@@ -171,11 +181,12 @@ def apply_glossary(
 # Интеграция в пайплайн DialogScribe (in-memory, по сегментам)
 # --------------------------------------------------------------------------------------
 
+
 class GlossaryLintError(ValueError):
     """Term-алиас совпал с настоящим русским/английским словом (переписал бы verbatim)."""
 
 
-def load_runtime(strict: bool = False) -> Tuple[Dict[str, str], Set[str]]:
+def load_runtime(strict: bool = False) -> tuple[dict[str, str], set[str]]:
     """Загрузить глоссарий + словари lint и вернуть (alias_map, suffixable).
 
     Прогоняет lint: при нарушении в ``strict`` режиме — ``GlossaryLintError``, иначе
@@ -197,9 +208,9 @@ def load_runtime(strict: bool = False) -> Tuple[Dict[str, str], Set[str]]:
 
 
 def apply_to_segments(
-    segments: List[TranscriptionSegment],
-    amap: Dict[str, str],
-    suffixable: Optional[Set[str]] = None,
+    segments: list[TranscriptionSegment],
+    amap: dict[str, str],
+    suffixable: set[str] | None = None,
 ) -> int:
     """Применить глоссарий к ``seg.text`` каждого сегмента (in-place). Возвращает число замен.
 

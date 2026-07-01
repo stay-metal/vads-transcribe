@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from gigaam_transcriber.data_models import TranscriptionResult, TranscriptionSegment
 from gigaam_transcriber.server import crypto, media
 from gigaam_transcriber.server.app import create_app
 from gigaam_transcriber.server.config import Settings
@@ -12,7 +13,6 @@ from gigaam_transcriber.server.job_runner import process_job
 from gigaam_transcriber.server.repository import get_yandex_auth
 from gigaam_transcriber.server.security import hash_password
 from gigaam_transcriber.server.yandex import ingest_pull
-from gigaam_transcriber.data_models import TranscriptionResult, TranscriptionSegment
 
 PASSWORD = "correct-horse-battery-staple"
 VALID = "valid-token"
@@ -27,13 +27,35 @@ class FakeYandex:
 
     def get_meta(self, path):
         if path.endswith(".mp3"):
-            return {"name": "mix.mp3", "path": path, "type": "file", "revision": 7, "resource_id": "rf"}
+            return {
+                "name": "mix.mp3",
+                "path": path,
+                "type": "file",
+                "revision": 7,
+                "resource_id": "rf",
+            }
         return {"name": "meeting", "path": path, "type": "dir", "revision": 5, "resource_id": "rd"}
 
     def listdir(self, path):
         return [
-            {"name": "Алиса.m4a", "path": f"{path}/Алиса.m4a", "type": "file", "revision": 5, "resource_id": "a", "size": 10, "md5": "x"},
-            {"name": "Боб.m4a", "path": f"{path}/Боб.m4a", "type": "file", "revision": 5, "resource_id": "b", "size": 10, "md5": "y"},
+            {
+                "name": "Алиса.m4a",
+                "path": f"{path}/Алиса.m4a",
+                "type": "file",
+                "revision": 5,
+                "resource_id": "a",
+                "size": 10,
+                "md5": "x",
+            },
+            {
+                "name": "Боб.m4a",
+                "path": f"{path}/Боб.m4a",
+                "type": "file",
+                "revision": 5,
+                "resource_id": "b",
+                "size": 10,
+                "md5": "y",
+            },
         ]
 
     def download(self, remote, local):
@@ -43,13 +65,27 @@ class FakeYandex:
 class FakeTranscriber:
     def transcribe_route_a(self, tracks, progress_callback=None, **kw):
         segs = [TranscriptionSegment(text="реплика", start=0.0, end=1.0, speaker=n) for n in tracks]
-        return TranscriptionResult(text="x", segments=segs, duration=5.0, language="ru",
-                                   model_name="fake", processing_time=1.0, metadata={"route": "A"})
+        return TranscriptionResult(
+            text="x",
+            segments=segs,
+            duration=5.0,
+            language="ru",
+            model_name="fake",
+            processing_time=1.0,
+            metadata={"route": "A"},
+        )
 
     def transcribe(self, input_path, **kw):
         segs = [TranscriptionSegment(text="привет", start=0.0, end=1.0, speaker="SPEAKER_00")]
-        return TranscriptionResult(text="привет", segments=segs, duration=5.0, language="ru",
-                                   model_name="fake", processing_time=1.0, metadata={})
+        return TranscriptionResult(
+            text="привет",
+            segments=segs,
+            duration=5.0,
+            language="ru",
+            model_name="fake",
+            processing_time=1.0,
+            metadata={},
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -59,21 +95,33 @@ def _no_ffmpeg(monkeypatch):
 
 def _settings(tmp_path):
     return Settings(
-        user="admin", password_hash=hash_password(PASSWORD),
-        session_key="session-key-aaaaaaaaaaaaaaaa", fernet_key="fernet-key-bbbbbbbbbbbbbbbb",
-        data_dir=tmp_path, cookie_secure=False, require_https=False,
+        user="admin",
+        password_hash=hash_password(PASSWORD),
+        session_key="session-key-aaaaaaaaaaaaaaaa",
+        fernet_key="fernet-key-bbbbbbbbbbbbbbbb",
+        data_dir=tmp_path,
+        cookie_secure=False,
+        require_https=False,
     )
 
 
 def _make(tmp_path):
     settings = _settings(tmp_path)
     transcriber = FakeTranscriber()
-    app = create_app(settings, enqueue=lambda jid: (process_job(settings, jid, transcriber), "gpu")[1])
+    app = create_app(
+        settings, enqueue=lambda jid: (process_job(settings, jid, transcriber), "gpu")[1]
+    )
     app.state.yandex_factory = lambda token: FakeYandex(token)
 
     def sync_io(surrogate, kind, tracks):
-        ingest_pull(settings, surrogate, kind, tracks, FakeYandex(VALID),
-                    enqueue_gpu=lambda jid: process_job(settings, jid, transcriber))
+        ingest_pull(
+            settings,
+            surrogate,
+            kind,
+            tracks,
+            FakeYandex(VALID),
+            enqueue_gpu=lambda jid: process_job(settings, jid, transcriber),
+        )
         return "io"
 
     app.state.enqueue_io = sync_io
@@ -238,8 +286,11 @@ def test_watch_dir_traversal_normalized(tmp_path, monkeypatch):
 
 def test_fernet_key_required_for_serve(tmp_path):
     s = Settings(
-        user="admin", password_hash=hash_password(PASSWORD),
-        session_key="s" * 20, fernet_key="", data_dir=tmp_path,
+        user="admin",
+        password_hash=hash_password(PASSWORD),
+        session_key="s" * 20,
+        fernet_key="",
+        data_dir=tmp_path,
     )
     problems = s.validate_for_serve()
     assert any("FERNET_KEY" in p for p in problems)
@@ -256,21 +307,51 @@ class WatchFake:
         self.md5 = md5
 
     def get_meta(self, path):
-        return {"name": Path(path).name, "path": path, "type": "dir", "revision": self.rev, "resource_id": "m"}
+        return {
+            "name": Path(path).name,
+            "path": path,
+            "type": "dir",
+            "revision": self.rev,
+            "resource_id": "m",
+        }
 
     def listdir(self, path):
         if path == "/watch":
-            return [{"name": "meeting", "path": "/watch/meeting", "type": "dir", "revision": self.rev, "resource_id": "m"}]
+            return [
+                {
+                    "name": "meeting",
+                    "path": "/watch/meeting",
+                    "type": "dir",
+                    "revision": self.rev,
+                    "resource_id": "m",
+                }
+            ]
         return [
-            {"name": "Алиса.m4a", "path": f"{path}/Алиса.m4a", "type": "file", "revision": self.rev, "md5": self.md5, "size": 10},
-            {"name": "Боб.m4a", "path": f"{path}/Боб.m4a", "type": "file", "revision": self.rev, "md5": self.md5, "size": 10},
+            {
+                "name": "Алиса.m4a",
+                "path": f"{path}/Алиса.m4a",
+                "type": "file",
+                "revision": self.rev,
+                "md5": self.md5,
+                "size": 10,
+            },
+            {
+                "name": "Боб.m4a",
+                "path": f"{path}/Боб.m4a",
+                "type": "file",
+                "revision": self.rev,
+                "md5": self.md5,
+                "size": 10,
+            },
         ]
 
 
 def test_ingest_source_get_put(tmp_path):
     c, _ = _make(tmp_path)
     assert c.get("/api/ingest/source").json()["configured"] is False
-    r = c.put("/api/ingest/source", json={"watch_dir": "/watch", "enabled": True, "poll_interval": 120})
+    r = c.put(
+        "/api/ingest/source", json={"watch_dir": "/watch", "enabled": True, "poll_interval": 120}
+    )
     assert r.status_code == 200
     got = c.get("/api/ingest/source").json()
     assert got["configured"] is True and got["watch_dir"] == "/watch" and got["enabled"] is True

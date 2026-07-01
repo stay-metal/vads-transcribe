@@ -17,15 +17,15 @@ TXT = b"just some text not a media file at all......"
 
 
 def _settings(tmp_path, **over):
-    base = dict(
-        user="admin",
-        password_hash=hash_password(PASSWORD),
-        session_key="session-key-aaaaaaaaaaaaaaaa",
-        fernet_key="fernet-key-bbbbbbbbbbbbbbbb",
-        data_dir=tmp_path,
-        cookie_secure=False,
-        require_https=False,
-    )
+    base = {
+        "user": "admin",
+        "password_hash": hash_password(PASSWORD),
+        "session_key": "session-key-aaaaaaaaaaaaaaaa",
+        "fernet_key": "fernet-key-bbbbbbbbbbbbbbbb",
+        "data_dir": tmp_path,
+        "cookie_secure": False,
+        "require_https": False,
+    }
     base.update(over)
     return Settings(**base)
 
@@ -59,9 +59,7 @@ def test_upload_single(auth_client):
 
 
 def test_upload_route_a_multi(auth_client):
-    r = auth_client.post(
-        "/api/uploads", files=[_file("Алиса.wav", WAV), _file("Боб.m4a", WAV)]
-    )
+    r = auth_client.post("/api/uploads", files=[_file("Алиса.wav", WAV), _file("Боб.m4a", WAV)])
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["kind"] == "route_a"
@@ -159,12 +157,8 @@ def test_confirm_rejects_foreign_id(auth_client):
 
 
 def test_confirm_rejects_duplicate_names(auth_client):
-    up = auth_client.post(
-        "/api/uploads", files=[_file("a.wav", WAV), _file("b.wav", WAV)]
-    ).json()
-    disc = auth_client.get(
-        f"/api/recordings/{up['recording_id']}/discover-tracks"
-    ).json()
+    up = auth_client.post("/api/uploads", files=[_file("a.wav", WAV), _file("b.wav", WAV)]).json()
+    disc = auth_client.get(f"/api/recordings/{up['recording_id']}/discover-tracks").json()
     ids = [t["id"] for t in disc["tracks"]]
     r = auth_client.post(
         f"/api/recordings/{up['recording_id']}/discover-tracks",

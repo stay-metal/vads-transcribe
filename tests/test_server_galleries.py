@@ -16,9 +16,13 @@ def _client(tmp_path, monkeypatch):
     gdir.mkdir()
     monkeypatch.setenv("DIALOGSCRIBE_GALLERY_DIR", str(gdir))
     s = Settings(
-        user="admin", password_hash=hash_password(PASSWORD),
-        session_key="s" * 20, fernet_key="f" * 20, data_dir=tmp_path,
-        cookie_secure=False, require_https=False,
+        user="admin",
+        password_hash=hash_password(PASSWORD),
+        session_key="s" * 20,
+        fernet_key="f" * 20,
+        data_dir=tmp_path,
+        cookie_secure=False,
+        require_https=False,
     )
     c = TestClient(create_app(s))
     c.post("/api/auth/login", data={"username": "admin", "password": PASSWORD})

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -24,7 +23,7 @@ def encrypt(key: str, plaintext: str) -> str:
     return _fernet(key).encrypt(plaintext.encode("utf-8")).decode("ascii")
 
 
-def decrypt(key: str, token: str) -> Optional[str]:
+def decrypt(key: str, token: str) -> str | None:
     try:
         return _fernet(key).decrypt(token.encode("ascii")).decode("utf-8")
     except (InvalidToken, ValueError, TypeError):

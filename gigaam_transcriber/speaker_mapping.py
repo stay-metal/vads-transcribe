@@ -14,8 +14,6 @@ ASR+diarization tutorial): основной критерий атрибуции 
 этого не исправляла.
 """
 
-from typing import Dict, List
-
 from .data_models import SpeakerSegment, TranscriptionSegment
 
 # Порог «слабой» атрибуции спикера: ниже него метка считается неуверенной
@@ -24,10 +22,10 @@ DIAR_WEAK_CONFIDENCE = 0.5
 
 
 def assign_speakers_by_overlap(
-    transcription_segments: List[TranscriptionSegment],
-    speaker_segments: List[SpeakerSegment],
+    transcription_segments: list[TranscriptionSegment],
+    speaker_segments: list[SpeakerSegment],
     fill_nearest: bool = True,
-) -> List[TranscriptionSegment]:
+) -> list[TranscriptionSegment]:
     """
     Назначить каждому сегменту транскрипции спикера по максимальному СУММАРНОМУ
     пересечению с turn'ами диаризации.
@@ -53,20 +51,16 @@ def assign_speakers_by_overlap(
         if duration <= 0:
             duration = 1e-9
 
-        overlap_by_speaker: Dict[str, float] = {}
+        overlap_by_speaker: dict[str, float] = {}
         for sp in speaker_segments:
             overlap = min(seg.end, sp.end) - max(seg.start, sp.start)
             if overlap > 0:
-                overlap_by_speaker[sp.speaker] = (
-                    overlap_by_speaker.get(sp.speaker, 0.0) + overlap
-                )
+                overlap_by_speaker[sp.speaker] = overlap_by_speaker.get(sp.speaker, 0.0) + overlap
 
         if overlap_by_speaker:
             best_speaker = max(overlap_by_speaker, key=overlap_by_speaker.get)
             seg.speaker = best_speaker
-            seg.speaker_confidence = min(
-                overlap_by_speaker[best_speaker] / duration, 1.0
-            )
+            seg.speaker_confidence = min(overlap_by_speaker[best_speaker] / duration, 1.0)
         elif fill_nearest:
             seg_mid = (seg.start + seg.end) / 2
             nearest = min(

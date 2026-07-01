@@ -12,6 +12,7 @@ ersatz-biasing к канону (Function Health / SuperPower), которого 
 Гейт точности (precision-first): низкий ``avg_logprob`` / высокий ``no_speech_prob`` →
 «нет мнения», оставляем GigaAM. Кэш по sha256(байты сегмента + модель + prompt).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -20,7 +21,6 @@ import os
 import re
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -50,7 +50,7 @@ def _gate_max_no_speech() -> float:
 
 
 _model = None
-_model_key: Optional[tuple] = None
+_model_key: tuple | None = None
 _model_lock = threading.Lock()
 
 
@@ -63,12 +63,13 @@ def _get_model(model: str):
         if _model is not None and _model_key == key:
             return _model
         from faster_whisper import WhisperModel  # тяжёлый импорт — только при первом мнении
+
         _model = WhisperModel(model, device="cpu", compute_type=_COMPUTE_TYPE)
         _model_key = key
         return _model
 
 
-def _prompt_text(context: Optional[str]) -> str:
+def _prompt_text(context: str | None) -> str:
     """Компактная словарь-подсказка для whisper initial_prompt (канонические написания)."""
     if not context:
         return ""
@@ -103,8 +104,11 @@ def _assess_confidence(segs: list) -> bool:
         total_dur += dur
         weighted_logprob += lp * dur
         max_no_speech = max(max_no_speech, float(getattr(s, "no_speech_prob", 0.0)))
-    avg_logprob = (weighted_logprob / total_dur) if total_dur > 0 else (
-        sum(float(getattr(s, "avg_logprob", 0.0)) for s in segs) / len(segs))
+    avg_logprob = (
+        (weighted_logprob / total_dur)
+        if total_dur > 0
+        else (sum(float(getattr(s, "avg_logprob", 0.0)) for s in segs) / len(segs))
+    )
     return avg_logprob >= _gate_min_logprob() and max_no_speech <= _gate_max_no_speech()
 
 
@@ -113,7 +117,7 @@ def second_opinion(
     model: str = DEFAULT_MODEL,
     *,
     lang_hint: str = "ru",
-    context: Optional[str] = None,
+    context: str | None = None,
 ) -> dict:
     """Локальное «второе мнение» по numpy-сегменту (float32, 16кГц моно).
 
@@ -149,8 +153,9 @@ def second_opinion(
     if text:  # пустое не кэшируем (отравило бы resume)
         CACHE_DIR.mkdir(parents=True, exist_ok=True)
         tmp = cache.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
-        tmp.write_text(json.dumps({"text": text, "confident": confident}, ensure_ascii=False),
-                       encoding="utf-8")
+        tmp.write_text(
+            json.dumps({"text": text, "confident": confident}, ensure_ascii=False), encoding="utf-8"
+        )
         os.replace(tmp, cache)
     return {"text": text, "model": model, "cached": False, "confident": confident}
 
@@ -163,13 +168,14 @@ def is_candidate(text: str) -> bool:
     return bool(_LATIN_RE.search(text or ""))
 
 
-def _build_context(alias_map: Dict[str, str]) -> str:
+def _build_context(alias_map: dict[str, str]) -> str:
     """Подсказка-прайминг: канонические написания терминов/имён из глоссария."""
     return " ".join(sorted({v for v in alias_map.values() if v}))
 
 
 def _load_waveform_16k_mono(audio_path) -> np.ndarray:
     import torchaudio
+
     wav, sr = torchaudio.load(str(audio_path))
     if sr != _SAMPLE_RATE:
         wav = torchaudio.transforms.Resample(sr, _SAMPLE_RATE)(wav)
@@ -181,7 +187,7 @@ def _load_waveform_16k_mono(audio_path) -> np.ndarray:
 def apply_second_opinion(
     result: TranscriptionResult,
     audio_path,
-    alias_map: Optional[Dict[str, str]] = None,
+    alias_map: dict[str, str] | None = None,
     *,
     model: str = DEFAULT_MODEL,
 ) -> int:
@@ -201,7 +207,7 @@ def apply_second_opinion(
     changed = 0
     all_corrections = []
     for seg in candidates:
-        a = waveform[int(seg.start * _SAMPLE_RATE): int(seg.end * _SAMPLE_RATE)]
+        a = waveform[int(seg.start * _SAMPLE_RATE) : int(seg.end * _SAMPLE_RATE)]
         if a.size == 0:
             continue
         res = second_opinion(a, model=model, context=context)
@@ -221,6 +227,7 @@ def apply_second_opinion(
     if all_corrections:
         try:
             from .glossary_grow import log_corrections
+
             log_corrections(all_corrections)
         except Exception:
             pass

@@ -14,7 +14,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from typing import Optional
 
 from .workers import assert_gpu_worker_config
 
@@ -44,7 +43,7 @@ def _ensure_forkable_start_method() -> None:
         pass
 
 
-def main(argv: Optional[list] = None) -> None:
+def main(argv: list | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     parser = argparse.ArgumentParser(prog="dialogscribe-gpu-worker")
     parser.add_argument("-w", "--workers", type=int, default=1)

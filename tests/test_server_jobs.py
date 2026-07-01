@@ -9,19 +9,21 @@ import io
 import pytest
 from fastapi.testclient import TestClient
 
+from gigaam_transcriber.data_models import TranscriptionResult, TranscriptionSegment
 from gigaam_transcriber.server import media
 from gigaam_transcriber.server.app import create_app
 from gigaam_transcriber.server.config import Settings
 from gigaam_transcriber.server.job_runner import process_job
 from gigaam_transcriber.server.security import hash_password
-from gigaam_transcriber.data_models import TranscriptionResult, TranscriptionSegment
 
 PASSWORD = "correct-horse-battery-staple"
 WAV = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 32
 
 
 class FakeTranscriber:
-    def transcribe_route_a(self, tracks, glossary=True, min_segment_gap=0.5, progress_callback=None):
+    def transcribe_route_a(
+        self, tracks, glossary=True, min_segment_gap=0.5, progress_callback=None
+    ):
         names = list(tracks)
         if progress_callback:
             for i, n in enumerate(names, 1):
@@ -31,16 +33,25 @@ class FakeTranscriber:
             for i, n in enumerate(names)
         ]
         return TranscriptionResult(
-            text=" ".join(s.text for s in segs), segments=segs, duration=10.0,
-            language="ru", model_name="fake", processing_time=1.0,
+            text=" ".join(s.text for s in segs),
+            segments=segs,
+            duration=10.0,
+            language="ru",
+            model_name="fake",
+            processing_time=1.0,
             metadata={"route": "A", "tracks": names},
         )
 
     def transcribe(self, input_path, diarization="pyannote", **kw):
         segs = [TranscriptionSegment(text="привет", start=0.0, end=1.0, speaker="SPEAKER_00")]
         return TranscriptionResult(
-            text="привет", segments=segs, duration=5.0, language="ru",
-            model_name="fake", processing_time=0.5, metadata={},
+            text="привет",
+            segments=segs,
+            duration=5.0,
+            language="ru",
+            model_name="fake",
+            processing_time=0.5,
+            metadata={},
         )
 
 
@@ -59,11 +70,15 @@ def _no_real_ffmpeg(monkeypatch, tmp_path):
 
 
 def _settings(tmp_path, **over):
-    base = dict(
-        user="admin", password_hash=hash_password(PASSWORD),
-        session_key="session-key-aaaaaaaaaaaaaaaa", fernet_key="fernet-key-bbbbbbbbbbbbbbbb",
-        data_dir=tmp_path, cookie_secure=False, require_https=False,
-    )
+    base = {
+        "user": "admin",
+        "password_hash": hash_password(PASSWORD),
+        "session_key": "session-key-aaaaaaaaaaaaaaaa",
+        "fernet_key": "fernet-key-bbbbbbbbbbbbbbbb",
+        "data_dir": tmp_path,
+        "cookie_secure": False,
+        "require_https": False,
+    }
     base.update(over)
     return Settings(**base)
 
@@ -290,15 +305,18 @@ def test_single_opt_in_toggles_passthrough(tmp_path, monkeypatch):
     monkeypatch.delenv("HF_TOKEN", raising=False)
     c, _ = _make_with_settings(tmp_path, CapturingTranscriber())
     up = c.post("/api/uploads", files=[_file("mix.wav")]).json()
-    c.post("/api/jobs", json={
-        "recording_id": up["recording_id"],
-        "diarization": "none",
-        "second_opinion": True,
-        "word_timestamps": True,
-        "preclean": True,
-        "backend": "onnx",
-        "emit_l0": True,
-    })
+    c.post(
+        "/api/jobs",
+        json={
+            "recording_id": up["recording_id"],
+            "diarization": "none",
+            "second_opinion": True,
+            "word_timestamps": True,
+            "preclean": True,
+            "backend": "onnx",
+            "emit_l0": True,
+        },
+    )
     kw = CapturingTranscriber.last_kwargs
     assert kw["second_opinion"] is True
     assert kw["word_timestamps"] is True

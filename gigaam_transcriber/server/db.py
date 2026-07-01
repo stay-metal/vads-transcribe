@@ -7,9 +7,9 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -137,9 +137,7 @@ def get_session_epoch(db_path: Path) -> int:
     with get_conn(db_path) as conn:
         row = conn.execute("SELECT value FROM meta WHERE key='session_epoch'").fetchone()
         if row is None:
-            conn.execute(
-                "INSERT OR IGNORE INTO meta(key, value) VALUES('session_epoch', '1')"
-            )
+            conn.execute("INSERT OR IGNORE INTO meta(key, value) VALUES('session_epoch', '1')")
             return 1
         return int(row["value"])
 
@@ -169,9 +167,7 @@ def reconcile_password_epoch(db_path: Path, password_hash: str) -> bool:
 
     fingerprint = hashlib.sha256(password_hash.encode("utf-8")).hexdigest()
     with get_conn(db_path) as conn:
-        row = conn.execute(
-            "SELECT value FROM meta WHERE key='pw_fingerprint'"
-        ).fetchone()
+        row = conn.execute("SELECT value FROM meta WHERE key='pw_fingerprint'").fetchone()
         if row is None:
             conn.execute(
                 "INSERT OR IGNORE INTO meta(key, value) VALUES('pw_fingerprint', ?)",
@@ -180,8 +176,6 @@ def reconcile_password_epoch(db_path: Path, password_hash: str) -> bool:
             return False
         if row["value"] == fingerprint:
             return False
-        conn.execute(
-            "UPDATE meta SET value=? WHERE key='pw_fingerprint'", (fingerprint,)
-        )
+        conn.execute("UPDATE meta SET value=? WHERE key='pw_fingerprint'", (fingerprint,))
     bump_session_epoch(db_path)
     return True

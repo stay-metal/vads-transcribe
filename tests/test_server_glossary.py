@@ -20,9 +20,13 @@ def client(tmp_path, monkeypatch):
     (cfg / "russian_words.txt").write_text("привет\nспасибо\n", encoding="utf-8")
     monkeypatch.setenv("GIGAAM_TRANSCRIBER_CONFIG", str(cfg))
     s = Settings(
-        user="admin", password_hash=hash_password(PASSWORD),
-        session_key="k1aaaaaaaaaaaaaaaa", fernet_key="k2bbbbbbbbbbbbbbbb",
-        data_dir=tmp_path, cookie_secure=False, require_https=False,
+        user="admin",
+        password_hash=hash_password(PASSWORD),
+        session_key="k1aaaaaaaaaaaaaaaa",
+        fernet_key="k2bbbbbbbbbbbbbbbb",
+        data_dir=tmp_path,
+        cookie_secure=False,
+        require_https=False,
     )
     c = TestClient(create_app(s))
     c.post("/api/auth/login", data={"username": "admin", "password": PASSWORD})
@@ -53,8 +57,14 @@ def test_put_rejects_real_word_term_alias(client):
 
 def test_glossary_requires_auth(tmp_path, monkeypatch):
     monkeypatch.setenv("GIGAAM_TRANSCRIBER_CONFIG", str(tmp_path / "c"))
-    s = Settings(user="admin", password_hash=hash_password(PASSWORD),
-                 session_key="x", fernet_key="y", data_dir=tmp_path,
-                 cookie_secure=False, require_https=False)
+    s = Settings(
+        user="admin",
+        password_hash=hash_password(PASSWORD),
+        session_key="x",
+        fernet_key="y",
+        data_dir=tmp_path,
+        cookie_secure=False,
+        require_https=False,
+    )
     c = TestClient(create_app(s))
     assert c.get("/api/glossary").status_code == 401

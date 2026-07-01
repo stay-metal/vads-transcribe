@@ -14,7 +14,6 @@ import json
 import os
 import unicodedata
 from pathlib import Path
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -40,7 +39,19 @@ STABILITY_THRESHOLD = 2
 
 router = APIRouter()
 
-AUDIO_EXT = {".wav", ".mp3", ".m4a", ".mp4", ".mov", ".ogg", ".opus", ".flac", ".webm", ".mkv", ".aac"}
+AUDIO_EXT = {
+    ".wav",
+    ".mp3",
+    ".m4a",
+    ".mp4",
+    ".mov",
+    ".ogg",
+    ".opus",
+    ".flac",
+    ".webm",
+    ".mkv",
+    ".aac",
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -60,25 +71,31 @@ class YaDiskClient:
         except Exception:
             return False
 
-    def listdir(self, path: str) -> List[dict]:
+    def listdir(self, path: str) -> list[dict]:
         out = []
         for r in self._y.listdir(path):
-            out.append({
-                "name": r.name,
-                "path": r.path,
-                "type": r.type,  # file | dir
-                "size": getattr(r, "size", None),
-                "md5": getattr(r, "md5", None),
-                "revision": getattr(r, "revision", None),
-                "resource_id": getattr(r, "resource_id", None),
-            })
+            out.append(
+                {
+                    "name": r.name,
+                    "path": r.path,
+                    "type": r.type,  # file | dir
+                    "size": getattr(r, "size", None),
+                    "md5": getattr(r, "md5", None),
+                    "revision": getattr(r, "revision", None),
+                    "resource_id": getattr(r, "resource_id", None),
+                }
+            )
         return out
 
     def get_meta(self, path: str) -> dict:
         r = self._y.get_meta(path)
-        return {"name": r.name, "path": r.path, "type": r.type,
-                "revision": getattr(r, "revision", None),
-                "resource_id": getattr(r, "resource_id", None)}
+        return {
+            "name": r.name,
+            "path": r.path,
+            "type": r.type,
+            "revision": getattr(r, "revision", None),
+            "resource_id": getattr(r, "resource_id", None),
+        }
 
     def download(self, remote: str, local: str) -> None:
         self._y.download(remote, local)
@@ -88,7 +105,7 @@ def _default_factory(token: str) -> YaDiskClient:
     return YaDiskClient(token)
 
 
-def _build_client(request: Request) -> Optional[object]:
+def _build_client(request: Request) -> object | None:
     """Собрать клиент из сохранённого (расшифрованного) токена или None."""
     settings = request.app.state.settings
     auth = get_yandex_auth(settings.db_path)
@@ -179,8 +196,11 @@ def ingest_path(settings, client, path: str, enqueue_io) -> dict:
         raise IngestError(404, "Путь не найден на Яндекс.Диске")
 
     if meta["type"] == "dir":
-        entries = [e for e in client.listdir(path)
-                   if e["type"] == "file" and Path(e["name"]).suffix.lower() in AUDIO_EXT]
+        entries = [
+            e
+            for e in client.listdir(path)
+            if e["type"] == "file" and Path(e["name"]).suffix.lower() in AUDIO_EXT
+        ]
         if not entries:
             raise IngestError(400, "В папке нет аудио-дорожек")
         kind = "route_a" if len(entries) > 1 else "single"
@@ -220,7 +240,7 @@ def pull(payload: PullIn, request: Request, user: str = Depends(require_session)
 # --------------------------------------------------------------------------- #
 # Авто-watch: поллер + конфиг источника
 # --------------------------------------------------------------------------- #
-def _signature(client, entry: dict) -> Optional[str]:
+def _signature(client, entry: dict) -> str | None:
     """Сигнатура (тип|размер/дети|ревизия) элемента верхнего уровня watch_dir.
 
     None → элемент ещё НЕ стабилен: не аудио, либо файл(ы) без md5 (дозаливается).
@@ -230,8 +250,11 @@ def _signature(client, entry: dict) -> Optional[str]:
             children = client.listdir(entry["path"])
         except Exception:
             return None
-        audio = [c for c in children
-                 if c["type"] == "file" and Path(c["name"]).suffix.lower() in AUDIO_EXT]
+        audio = [
+            c
+            for c in children
+            if c["type"] == "file" and Path(c["name"]).suffix.lower() in AUDIO_EXT
+        ]
         if not audio or any(c.get("md5") is None for c in audio):
             return None  # пусто или файлы ещё грузятся
         rev = max((c.get("revision") or 0) for c in audio)
@@ -241,7 +264,7 @@ def _signature(client, entry: dict) -> Optional[str]:
     return f"file|{entry.get('size') or 0}|{entry.get('revision') or 0}"
 
 
-def poll_ingest_sources(settings, client, enqueue_io) -> List[dict]:
+def poll_ingest_sources(settings, client, enqueue_io) -> list[dict]:
     """Один проход авто-watch: для стабильных элементов watch_dir → ingest_path.
 
     Идемпотентно: `ingest_seen` дедупит по `path:revision`, `ingest_stability`
@@ -255,7 +278,7 @@ def poll_ingest_sources(settings, client, enqueue_io) -> List[dict]:
         entries = client.listdir(watch_dir)
     except Exception:
         return []
-    out: List[dict] = []
+    out: list[dict] = []
     for e in entries:
         if not _under_watch_dir(e["path"], watch_dir):
             continue
@@ -327,7 +350,9 @@ def _name(filename: str) -> str:
 # --------------------------------------------------------------------------- #
 # Worker (io-очередь): скачать дорожки → создать запись/джобу → enqueue gpu
 # --------------------------------------------------------------------------- #
-def ingest_pull(settings, surrogate_id: str, kind: str, remote_tracks: list, client, enqueue_gpu) -> Optional[str]:
+def ingest_pull(
+    settings, surrogate_id: str, kind: str, remote_tracks: list, client, enqueue_gpu
+) -> str | None:
     """Скачивание на io-воркере (без GPU). Возвращает job_id или None при ошибке."""
     import shutil
 
@@ -345,15 +370,25 @@ def ingest_pull(settings, surrogate_id: str, kind: str, remote_tracks: list, cli
             os.replace(tmp, local)  # atomic-rename после полного скачивания
             tracks.append({"name": t["name"], "path": str(local), "size": local.stat().st_size})
 
-        rec_id = create_recording(db, origin="yandex", kind=kind, tracks=tracks,
-                                  title=tracks[0]["name"] if tracks else None)
+        rec_id = create_recording(
+            db,
+            origin="yandex",
+            kind=kind,
+            tracks=tracks,
+            title=tracks[0]["name"] if tracks else None,
+        )
         params = {"glossary": True}
         if kind == "single":
             params["diarization"] = "pyannote" if os.getenv("HF_TOKEN") else "none"
         job_id = create_job(db, mode=kind, source="yandex", recording_id=rec_id, params=params)
         output_dir = Path(settings.data_dir) / "outputs" / job_id
-        set_job_dirs(db, job_id, work_dir=str(work), output_dir=str(output_dir),
-                     manifest_path=str(output_dir / "manifest.json"))
+        set_job_dirs(
+            db,
+            job_id,
+            work_dir=str(work),
+            output_dir=str(output_dir),
+            manifest_path=str(output_dir / "manifest.json"),
+        )
         set_recording_latest_job(db, rec_id, job_id)
         update_ingest(db, surrogate_id, status="downloaded", recording_id=rec_id, job_id=job_id)
     except Exception:

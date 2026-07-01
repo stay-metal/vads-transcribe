@@ -56,7 +56,9 @@ def test_merge_provenance_precedence():
 
 
 def test_merge_unions_flags_and_picks_provenance():
-    s1 = TranscriptionSegment(text="а", start=0, end=4, speaker="A", flags=["x"], provenance="gigaam")
+    s1 = TranscriptionSegment(
+        text="а", start=0, end=4, speaker="A", flags=["x"], provenance="gigaam"
+    )
     s2 = TranscriptionSegment(
         text="б", start=4, end=6, speaker="A", flags=["y"], provenance="second-opinion"
     )

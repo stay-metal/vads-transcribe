@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Dict
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -21,8 +20,8 @@ router = APIRouter()
 
 
 class GlossaryIn(BaseModel):
-    people: Dict[str, str] = {}
-    terms: Dict[str, str] = {}
+    people: dict[str, str] = {}
+    terms: dict[str, str] = {}
 
 
 def _glossary_path() -> Path:
@@ -40,7 +39,9 @@ def get_glossary(request: Request, user: str = Depends(require_session)) -> dict
 
 
 @router.put("/api/glossary")
-def put_glossary(payload: GlossaryIn, request: Request, user: str = Depends(require_session)) -> dict:
+def put_glossary(
+    payload: GlossaryIn, request: Request, user: str = Depends(require_session)
+) -> dict:
     from gigaam_transcriber.glossary import lint, load_en_words, load_ru_words
 
     glossary = {"people": payload.people, "terms": payload.terms}

@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import unicodedata
 from pathlib import Path
-from typing import List
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 
@@ -31,7 +30,7 @@ def _participant_name(filename: str) -> str:
 @router.post("/api/uploads")
 async def upload(
     request: Request,
-    files: List[UploadFile] = File(...),
+    files: list[UploadFile] = File(...),
     user: str = Depends(require_session),
 ) -> dict:
     settings = request.app.state.settings
@@ -49,7 +48,7 @@ async def upload(
     upload_dir = Path(settings.data_dir) / "uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
 
-    saved: List[dict] = []
+    saved: list[dict] = []
     total = 0
     try:
         for f in files:
@@ -78,9 +77,7 @@ async def upload(
             if media.sniff_media(head) is None:
                 dest.unlink(missing_ok=True)
                 raise HTTPException(415, f"Неподдерживаемый формат: {f.filename!r}")
-            saved.append(
-                {"name": _participant_name(f.filename), "path": str(dest), "size": size}
-            )
+            saved.append({"name": _participant_name(f.filename), "path": str(dest), "size": size})
     except HTTPException:
         for t in saved:  # откат уже сохранённых дорожек этой записи
             Path(t["path"]).unlink(missing_ok=True)
@@ -88,7 +85,10 @@ async def upload(
 
     kind = "route_a" if len(saved) > 1 else "single"
     rec_id = create_recording(
-        settings.db_path, origin="upload", kind=kind, tracks=saved,
+        settings.db_path,
+        origin="upload",
+        kind=kind,
+        tracks=saved,
         title=saved[0]["name"] if saved else None,
     )
     return {

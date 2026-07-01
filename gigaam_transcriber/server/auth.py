@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response
 
@@ -43,7 +42,7 @@ class LoginThrottle:
         self,
         max_failures: int,
         lockout_seconds: int,
-        global_max_failures: Optional[int] = None,
+        global_max_failures: int | None = None,
         max_lockout_seconds: int = 3600,
     ):
         self.max_failures = max_failures
@@ -57,16 +56,14 @@ class LoginThrottle:
         self._per_ip: dict[str, list] = {}  # ip -> [failures, lock_until, lockouts]
 
     def _backoff(self, lockouts: int) -> float:
-        return min(self.lockout_seconds * (2 ** lockouts), self.max_lockout_seconds)
+        return min(self.lockout_seconds * (2**lockouts), self.max_lockout_seconds)
 
     def _evict(self, now: float) -> None:
-        dead = [
-            ip for ip, r in self._per_ip.items() if r[0] == 0 and r[1] <= now
-        ]
+        dead = [ip for ip, r in self._per_ip.items() if r[0] == 0 and r[1] <= now]
         for ip in dead:
             del self._per_ip[ip]
 
-    def retry_after(self, ip: str, now: Optional[float] = None) -> int:
+    def retry_after(self, ip: str, now: float | None = None) -> int:
         """0, если попытка разрешена; иначе секунды до разблокировки."""
         now = time.time() if now is None else now
         with self._lock:
@@ -77,7 +74,7 @@ class LoginThrottle:
                 wait = max(wait, rec[1] - now)
             return int(wait) + 1 if wait > 0 else 0
 
-    def record_failure(self, ip: str, now: Optional[float] = None) -> None:
+    def record_failure(self, ip: str, now: float | None = None) -> None:
         now = time.time() if now is None else now
         with self._lock:
             self._global_failures += 1

@@ -29,9 +29,10 @@ def test_loop_detection():
 
 
 def test_varied_long_text_no_loop():
-    assert detect_quality_flags(
-        "мы обсудили задачи по админке интеграции и рендерингу отчёта врачам"
-    ) == []
+    assert (
+        detect_quality_flags("мы обсудили задачи по админке интеграции и рендерингу отчёта врачам")
+        == []
+    )
 
 
 def test_does_not_modify_text():

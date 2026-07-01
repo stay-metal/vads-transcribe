@@ -338,8 +338,9 @@ def quality_options(func):
     return func
 
 
-def _make_transcriber(model, device, verbose, diar_device, embedding_batch_size,
-                      segmentation_batch_size, diar_backend):
+def _make_transcriber(
+    model, device, verbose, diar_device, embedding_batch_size, segmentation_batch_size, diar_backend
+):
     return GigaAMTranscriber(
         model_name=model,
         device=device,
@@ -411,8 +412,13 @@ def transcribe(
     """Транскрибировать один аудио/видео файл."""
     _warn_missing_hf_token(diarize)
     with _make_transcriber(
-        model, device, verbose, diar_device, embedding_batch_size,
-        segmentation_batch_size, diar_backend,
+        model,
+        device,
+        verbose,
+        diar_device,
+        embedding_batch_size,
+        segmentation_batch_size,
+        diar_backend,
     ) as transcriber:
         with _spinner("Транскрипция…", use_rich=not quiet and _progress_enabled(verbose)):
             result = transcriber.transcribe(
@@ -448,9 +454,7 @@ def transcribe(
 # --------------------------------------------------------------------------- #
 @cli.command()
 @click.argument("input_files", nargs=-1, type=UnicodePathType(exists=True))
-@click.option(
-    "-o", "--output-dir", type=click.Path(), help="Директория для результатов"
-)
+@click.option("-o", "--output-dir", type=click.Path(), help="Директория для результатов")
 @quality_options
 @guarded
 def batch(
@@ -488,8 +492,13 @@ def batch(
     if output_dir:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
     with _make_transcriber(
-        model, device, verbose, diar_device, embedding_batch_size,
-        segmentation_batch_size, diar_backend,
+        model,
+        device,
+        verbose,
+        diar_device,
+        embedding_batch_size,
+        segmentation_batch_size,
+        diar_backend,
     ) as transcriber:
         with _RichProgress("Пакет", use_rich=_progress_enabled(verbose)) as progress:
             results = transcriber.transcribe_batch(
@@ -553,7 +562,9 @@ def batch(
 @click.option("-q", "--quiet", is_flag=True, help="Тихий режим — только результат")
 @click.option("-v", "--verbose", is_flag=True, help="Подробный вывод")
 @guarded
-def route_a(folder, output, speaker_dir, output_format, glossary, gap, model, device, quiet, verbose):
+def route_a(
+    folder, output, speaker_dir, output_format, glossary, gap, model, device, quiet, verbose
+):
     """Транскрипция подорожечной записи: спикер = имя дорожки (без диаризации)."""
     tracks = GigaAMTranscriber.discover_route_a_tracks(folder, speaker_dir=speaker_dir)
     if not tracks:
@@ -564,7 +575,9 @@ def route_a(folder, output, speaker_dir, output_format, glossary, gap, model, de
     if not quiet:
         _eecho(f"🎚️  Найдено дорожек: {len(tracks)} — {', '.join(tracks)}")
     with GigaAMTranscriber(model_name=model, device=device, verbose=verbose) as transcriber:
-        with _RichProgress("Дорожки", use_rich=not quiet and _progress_enabled(verbose)) as progress:
+        with _RichProgress(
+            "Дорожки", use_rich=not quiet and _progress_enabled(verbose)
+        ) as progress:
             result = transcriber.transcribe_route_a(
                 tracks,
                 output_path=output,
@@ -576,8 +589,7 @@ def route_a(folder, output, speaker_dir, output_format, glossary, gap, model, de
     failed = result.metadata.get("failed_tracks") or []
     if failed and not quiet:
         _esecho(
-            f"⚠️  Пропущено дорожек: {len(failed)} "
-            f"({', '.join(f['name'] for f in failed)})",
+            f"⚠️  Пропущено дорожек: {len(failed)} " f"({', '.join(f['name'] for f in failed)})",
             fg="yellow",
         )
     _print_result_summary(result, output, quiet)
@@ -591,11 +603,7 @@ def route_a(folder, output, speaker_dir, output_format, glossary, gap, model, de
 def _gallery_dir() -> Path:
     """Каталог хранения галерей (env DIALOGSCRIBE_GALLERY_DIR или ~/.cache)."""
     env = os.getenv("DIALOGSCRIBE_GALLERY_DIR")
-    base = (
-        Path(env)
-        if env
-        else Path.home() / ".cache" / "gigaam_transcriber" / "galleries"
-    )
+    base = Path(env) if env else Path.home() / ".cache" / "gigaam_transcriber" / "galleries"
     base.mkdir(parents=True, exist_ok=True)
     return base
 
@@ -607,8 +615,7 @@ def _gallery_path(name: str) -> Path:
     """Безопасный путь галереи: имя — слаг, без разделителей/`..`/абсолютных путей."""
     if not _SAFE_GALLERY_NAME.match(name or ""):
         raise click.UsageError(
-            f"Недопустимое имя галереи: {name!r} "
-            "(разрешены буквы/цифры/_/-, без путей и точек)."
+            f"Недопустимое имя галереи: {name!r} " "(разрешены буквы/цифры/_/-, без путей и точек)."
         )
     return _gallery_dir() / f"{name}.json"
 
@@ -645,9 +652,7 @@ def gallery_build(name, tracks_raw):
         tracks[label] = str(normalize_path(path.strip()))
     refs = build_gallery_from_tracks(tracks)
     if not refs:
-        raise click.UsageError(
-            "Не удалось построить ни одного эмбеддинга (пустые/битые дорожки)."
-        )
+        raise click.UsageError("Не удалось построить ни одного эмбеддинга (пустые/битые дорожки).")
     save_gallery(refs, out)
     _esecho(f"✅ Галерея '{name}' сохранена: {out}", fg="green")
     _eecho(f"👥 Голоса: {', '.join(refs)}")
@@ -699,8 +704,7 @@ def serve(host, port, reload):
         from gigaam_transcriber.server.config import Settings
     except ImportError:
         _esecho(
-            "Серверные зависимости не установлены. Установите: "
-            "pip install -e '.[server]'",
+            "Серверные зависимости не установлены. Установите: " "pip install -e '.[server]'",
             fg="red",
         )
         sys.exit(1)

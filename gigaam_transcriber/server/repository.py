@@ -10,7 +10,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .db import get_conn
 
@@ -37,7 +37,7 @@ def new_id() -> str:
     return uuid.uuid4().hex
 
 
-def _row_to_dict(row) -> Optional[dict]:
+def _row_to_dict(row) -> dict | None:
     return dict(row) if row is not None else None
 
 
@@ -49,9 +49,9 @@ def create_recording(
     *,
     origin: str,
     kind: str,
-    title: Optional[str] = None,
-    tracks: Optional[List[Dict[str, Any]]] = None,
-    ingest_key: Optional[str] = None,
+    title: str | None = None,
+    tracks: list[dict[str, Any]] | None = None,
+    ingest_key: str | None = None,
 ) -> str:
     tracks = tracks or []
     rec_id = new_id()
@@ -59,13 +59,21 @@ def create_recording(
         conn.execute(
             "INSERT INTO recordings(id, origin, title, kind, track_count, tracks_json, "
             "ingest_key, created_at) VALUES(?,?,?,?,?,?,?,?)",
-            (rec_id, origin, title, kind, len(tracks), json.dumps(tracks, ensure_ascii=False),
-             ingest_key, _now()),
+            (
+                rec_id,
+                origin,
+                title,
+                kind,
+                len(tracks),
+                json.dumps(tracks, ensure_ascii=False),
+                ingest_key,
+                _now(),
+            ),
         )
     return rec_id
 
 
-def get_recording(db_path: Path, rec_id: str) -> Optional[dict]:
+def get_recording(db_path: Path, rec_id: str) -> dict | None:
     with get_conn(db_path) as conn:
         row = conn.execute("SELECT * FROM recordings WHERE id=?", (rec_id,)).fetchone()
     rec = _row_to_dict(row)
@@ -74,9 +82,7 @@ def get_recording(db_path: Path, rec_id: str) -> Optional[dict]:
     return rec
 
 
-def update_recording_tracks(
-    db_path: Path, rec_id: str, tracks: List[Dict[str, Any]]
-) -> None:
+def update_recording_tracks(db_path: Path, rec_id: str, tracks: list[dict[str, Any]]) -> None:
     with get_conn(db_path) as conn:
         conn.execute(
             "UPDATE recordings SET tracks_json=?, track_count=? WHERE id=?",
@@ -86,9 +92,7 @@ def update_recording_tracks(
 
 def set_recording_latest_job(db_path: Path, rec_id: str, job_id: str) -> None:
     with get_conn(db_path) as conn:
-        conn.execute(
-            "UPDATE recordings SET latest_job_id=? WHERE id=?", (job_id, rec_id)
-        )
+        conn.execute("UPDATE recordings SET latest_job_id=? WHERE id=?", (job_id, rec_id))
 
 
 # --------------------------------------------------------------------------- #
@@ -99,11 +103,11 @@ def create_job(
     *,
     mode: str,
     source: str = "upload",
-    recording_id: Optional[str] = None,
-    params: Optional[Dict[str, Any]] = None,
-    work_dir: Optional[str] = None,
-    output_dir: Optional[str] = None,
-    manifest_path: Optional[str] = None,
+    recording_id: str | None = None,
+    params: dict[str, Any] | None = None,
+    work_dir: str | None = None,
+    output_dir: str | None = None,
+    manifest_path: str | None = None,
 ) -> str:
     job_id = new_id()
     with get_conn(db_path) as conn:
@@ -111,14 +115,24 @@ def create_job(
             "INSERT INTO jobs(id, recording_id, source, mode, state, stage_pct, "
             "params_json, work_dir, output_dir, manifest_path, created_at) "
             "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-            (job_id, recording_id, source, mode, "queued", 0,
-             json.dumps(params or {}, ensure_ascii=False),
-             work_dir, output_dir, manifest_path, _now()),
+            (
+                job_id,
+                recording_id,
+                source,
+                mode,
+                "queued",
+                0,
+                json.dumps(params or {}, ensure_ascii=False),
+                work_dir,
+                output_dir,
+                manifest_path,
+                _now(),
+            ),
         )
     return job_id
 
 
-def get_job(db_path: Path, job_id: str) -> Optional[dict]:
+def get_job(db_path: Path, job_id: str) -> dict | None:
     with get_conn(db_path) as conn:
         row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
     job = _row_to_dict(row)
@@ -128,7 +142,7 @@ def get_job(db_path: Path, job_id: str) -> Optional[dict]:
     return job
 
 
-def list_jobs(db_path: Path, limit: int = 100) -> List[dict]:
+def list_jobs(db_path: Path, limit: int = 100) -> list[dict]:
     with get_conn(db_path) as conn:
         rows = conn.execute(
             "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
@@ -144,9 +158,7 @@ def list_jobs(db_path: Path, limit: int = 100) -> List[dict]:
 
 def set_job_huey_task(db_path: Path, job_id: str, huey_task_id: str) -> None:
     with get_conn(db_path) as conn:
-        conn.execute(
-            "UPDATE jobs SET huey_task_id=? WHERE id=?", (huey_task_id, job_id)
-        )
+        conn.execute("UPDATE jobs SET huey_task_id=? WHERE id=?", (huey_task_id, job_id))
 
 
 def set_job_dirs(
@@ -183,9 +195,7 @@ def claim_job(db_path: Path, job_id: str) -> bool:
         return cur.rowcount > 0
 
 
-def update_job_progress(
-    db_path: Path, job_id: str, state: str, stage_pct: int
-) -> None:
+def update_job_progress(db_path: Path, job_id: str, state: str, stage_pct: int) -> None:
     """Обновить стадию/процент; терминальные состояния не перезаписываются."""
     with get_conn(db_path) as conn:
         if state != "queued":
@@ -220,10 +230,10 @@ def finish_job_ok(
     db_path: Path,
     job_id: str,
     *,
-    result_json_path: Optional[str],
-    audio_path: Optional[str],
-    duration_sec: Optional[float],
-    processing_time_sec: Optional[float],
+    result_json_path: str | None,
+    audio_path: str | None,
+    duration_sec: float | None,
+    processing_time_sec: float | None,
     device_fallback: bool,
 ) -> None:
     with get_conn(db_path) as conn:
@@ -231,8 +241,15 @@ def finish_job_ok(
             "UPDATE jobs SET state='done', stage_pct=100, result_json_path=?, audio_path=?, "
             "duration_sec=?, processing_time_sec=?, device_fallback=?, finished_at=? "
             "WHERE id=? AND state NOT IN ('done','error','canceled')",
-            (result_json_path, audio_path, duration_sec, processing_time_sec,
-             1 if device_fallback else 0, _now(), job_id),
+            (
+                result_json_path,
+                audio_path,
+                duration_sec,
+                processing_time_sec,
+                1 if device_fallback else 0,
+                _now(),
+                job_id,
+            ),
         )
 
 
@@ -258,7 +275,7 @@ def cancel_job_if_queued(db_path: Path, job_id: str) -> bool:
 # --------------------------------------------------------------------------- #
 # speaker_edits (overlay; result.json не мутируется)
 # --------------------------------------------------------------------------- #
-def get_speaker_edits(db_path: Path, job_id: str) -> Dict[str, str]:
+def get_speaker_edits(db_path: Path, job_id: str) -> dict[str, str]:
     with get_conn(db_path) as conn:
         rows = conn.execute(
             "SELECT original_label, new_label FROM speaker_edits WHERE job_id=?",
@@ -267,9 +284,7 @@ def get_speaker_edits(db_path: Path, job_id: str) -> Dict[str, str]:
     return {r["original_label"]: r["new_label"] for r in rows}
 
 
-def set_speaker_edit(
-    db_path: Path, job_id: str, original_label: str, new_label: str
-) -> None:
+def set_speaker_edit(db_path: Path, job_id: str, original_label: str, new_label: str) -> None:
     with get_conn(db_path) as conn:
         conn.execute(
             "INSERT INTO speaker_edits(job_id, original_label, new_label) VALUES(?,?,?) "
@@ -291,7 +306,7 @@ def set_yandex_token(db_path: Path, token_enc: str, check_ok: bool) -> None:
         )
 
 
-def get_yandex_auth(db_path: Path) -> Optional[dict]:
+def get_yandex_auth(db_path: Path) -> dict | None:
     with get_conn(db_path) as conn:
         row = conn.execute("SELECT * FROM yandex_auth WHERE id=1").fetchone()
     auth = _row_to_dict(row)
@@ -300,7 +315,7 @@ def get_yandex_auth(db_path: Path) -> Optional[dict]:
     return auth
 
 
-def claim_ingest(db_path: Path, key: str, resource_id: Optional[str]) -> Optional[str]:
+def claim_ingest(db_path: Path, key: str, resource_id: str | None) -> str | None:
     """Claim по `path:revision`. Возвращает surrogate_id для обработки, иначе None.
 
     Первый раз → новый surrogate. Если строка уже есть: терминальную
@@ -324,13 +339,11 @@ def claim_ingest(db_path: Path, key: str, resource_id: Optional[str]) -> Optiona
         if row["status"] in ("downloaded", "done"):
             return None  # действительно уже обработано
         # не-терминальная (сбой/краш) → переклеймить тем же surrogate
-        conn.execute(
-            "UPDATE ingest_seen SET status='claimed' WHERE key=?", (key,)
-        )
+        conn.execute("UPDATE ingest_seen SET status='claimed' WHERE key=?", (key,))
         return row["surrogate_id"]
 
 
-def get_ingest(db_path: Path, surrogate_id: str) -> Optional[dict]:
+def get_ingest(db_path: Path, surrogate_id: str) -> dict | None:
     with get_conn(db_path) as conn:
         row = conn.execute(
             "SELECT * FROM ingest_seen WHERE surrogate_id=?", (surrogate_id,)
@@ -342,9 +355,9 @@ def update_ingest(
     db_path: Path,
     surrogate_id: str,
     *,
-    status: Optional[str] = None,
-    recording_id: Optional[str] = None,
-    job_id: Optional[str] = None,
+    status: str | None = None,
+    recording_id: str | None = None,
+    job_id: str | None = None,
 ) -> None:
     sets, vals = [], []
     if status is not None:
@@ -360,13 +373,11 @@ def update_ingest(
         return
     vals.append(surrogate_id)
     with get_conn(db_path) as conn:
-        conn.execute(
-            f"UPDATE ingest_seen SET {', '.join(sets)} WHERE surrogate_id=?", vals
-        )
+        conn.execute(f"UPDATE ingest_seen SET {', '.join(sets)} WHERE surrogate_id=?", vals)
 
 
 # --- Авто-watch: singleton-конфиг источника + окно стабильности ---
-def get_ingest_source(db_path: Path) -> Optional[dict]:
+def get_ingest_source(db_path: Path) -> dict | None:
     with get_conn(db_path) as conn:
         row = conn.execute("SELECT * FROM ingest_sources WHERE id=1").fetchone()
     src = _row_to_dict(row)

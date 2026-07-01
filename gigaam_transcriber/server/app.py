@@ -11,12 +11,10 @@ Middleware:
 
 from __future__ import annotations
 
-from typing import Optional
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-
-from urllib.parse import urlparse
 
 from .auth import LoginThrottle
 from .auth import router as auth_router
@@ -61,7 +59,7 @@ def _default_enqueue_io(surrogate_id: str, kind: str, remote_tracks: list):
     return pull_recording(surrogate_id, kind, remote_tracks).id
 
 
-def create_app(settings: Optional[Settings] = None, enqueue=None) -> FastAPI:
+def create_app(settings: Settings | None = None, enqueue=None) -> FastAPI:
     settings = settings or Settings.from_env()
     settings.ensure_dirs()
     init_db(settings.db_path)

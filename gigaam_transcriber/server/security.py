@@ -11,7 +11,6 @@
 from __future__ import annotations
 
 import hmac
-from typing import Optional
 
 import bcrypt
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
@@ -57,7 +56,7 @@ def verify_session(
     max_age: int,
     expected_user: str,
     expected_epoch: int,
-) -> Optional[str]:
+) -> str | None:
     """Вернуть имя пользователя, если токен валиден, свеж и epoch совпал; иначе None."""
     if not session_key or not token:
         return None
