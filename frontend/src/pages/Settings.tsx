@@ -12,11 +12,21 @@ import {
   Tabs,
   Toggle,
   Mono,
+  SpeakerNode,
   ErrorCard,
 } from "@/components/ui";
-import { IconBook, IconCloud, IconArchive, IconActivity, IconTrash, IconDownload, IconSearch } from "@/components/icons";
+import {
+  IconBook,
+  IconCloud,
+  IconArchive,
+  IconActivity,
+  IconTrash,
+  IconDownload,
+  IconSearch,
+  IconUsers,
+} from "@/components/icons";
 
-type Tab = "glossary" | "sources" | "retention" | "health";
+type Tab = "glossary" | "sources" | "voices" | "retention" | "health";
 
 export default function Settings() {
   const [tab, setTab] = React.useState<Tab>("glossary");
@@ -30,6 +40,7 @@ export default function Settings() {
           tabs={[
             { value: "glossary", label: "Словарь", icon: <IconBook size={17} /> },
             { value: "sources", label: "Источники", icon: <IconCloud size={17} /> },
+            { value: "voices", label: "Голоса", icon: <IconUsers size={17} /> },
             { value: "retention", label: "Хранение", icon: <IconArchive size={17} /> },
             { value: "health", label: "Здоровье", icon: <IconActivity size={17} /> },
           ]}
@@ -37,6 +48,7 @@ export default function Settings() {
         <div>
           {tab === "glossary" && <GlossarySection />}
           {tab === "sources" && <SourcesSection />}
+          {tab === "voices" && <VoicesSection />}
           {tab === "retention" && <RetentionSection />}
           {tab === "health" && <HealthSection />}
         </div>
@@ -345,6 +357,63 @@ function AutoWatchCard() {
         {saved && <span className="text-sm text-emerald-600">Сохранено</span>}
       </div>
     </Card>
+  );
+}
+
+/* ─── Голоса (галереи voiceprint) ────────────────────────────────────── */
+function VoicesSection() {
+  const { data, isLoading, refetch } = useQuery({ queryKey: ["galleries"], queryFn: api.listGalleries });
+  const [busy, setBusy] = React.useState<string | null>(null);
+
+  async function remove(name: string) {
+    setBusy(name);
+    try {
+      await api.deleteGallery(name);
+      refetch();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (isLoading) return <Loading label="Загрузка галерей…" />;
+  const galleries = data?.galleries ?? [];
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-5">
+        <div className="text-sm font-medium text-ink">Галереи голосов</div>
+        <p className="mt-1 text-xs leading-snug text-ink-muted">
+          Именуют спикеров в общем миксе по образцам голосов. Создаются командой
+          <Mono className="mx-1">dialogscribe gallery build</Mono>— здесь просмотр и удаление.
+        </p>
+      </Card>
+      {galleries.length === 0 ? (
+        <Card className="px-5 py-8 text-center text-sm text-ink-muted">Пока нет галерей.</Card>
+      ) : (
+        <Card className="divide-y divide-line/70 overflow-hidden">
+          {galleries.map((g) => (
+            <div key={g.name} className="flex items-center gap-3 px-5 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm font-medium text-ink">{g.name}</div>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {g.voices.map((v) => (
+                    <SpeakerNode key={v} name={v} size={7} />
+                  ))}
+                </div>
+              </div>
+              <button
+                onClick={() => remove(g.name)}
+                disabled={busy === g.name}
+                className="shrink-0 rounded-control p-2 text-ink-muted transition-colors hover:bg-coral-soft hover:text-coral-500"
+                aria-label="Удалить галерею"
+              >
+                <IconTrash size={16} />
+              </button>
+            </div>
+          ))}
+        </Card>
+      )}
+    </div>
   );
 }
 

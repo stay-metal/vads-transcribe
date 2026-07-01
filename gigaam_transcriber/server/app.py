@@ -108,6 +108,7 @@ def create_app(settings: Optional[Settings] = None, enqueue=None) -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(auth_router)
+    from .galleries_api import router as galleries_router
     from .glossary_api import router as glossary_router
     from .jobs import router as jobs_router
     from .recordings import router as recordings_router
@@ -119,6 +120,7 @@ def create_app(settings: Optional[Settings] = None, enqueue=None) -> FastAPI:
     app.include_router(jobs_router)
     app.include_router(yandex_router)
     app.include_router(glossary_router)
+    app.include_router(galleries_router)
 
     # SPA (M4) монтируется ПОСЛЕ /api — catch-all только для клиентских маршрутов.
     from .static import mount_spa

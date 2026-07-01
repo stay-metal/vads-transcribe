@@ -121,6 +121,11 @@ export const api = {
       body: JSON.stringify({ path }),
     }),
 
+  // --- Галереи голосов (voiceprint) ---
+  listGalleries: () => req<{ galleries: Gallery[] }>("/api/galleries"),
+  deleteGallery: (name: string) =>
+    req<{ deleted: string }>(`/api/galleries/${encodeURIComponent(name)}`, { method: "DELETE" }),
+
   // --- Авто-watch источника (периодический опрос watch_dir) ---
   getIngestSource: () => req<IngestSource>("/api/ingest/source"),
   putIngestSource: (body: { watch_dir: string; enabled: boolean; poll_interval: number }) =>
@@ -137,6 +142,11 @@ export interface IngestSource {
   enabled?: boolean;
   poll_interval?: number;
   default_params?: Record<string, unknown>;
+}
+
+export interface Gallery {
+  name: string;
+  voices: string[];
 }
 
 export interface Glossary {
