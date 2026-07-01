@@ -12,10 +12,36 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from typing import Optional
 
 from .workers import assert_gpu_worker_config
+
+
+def _ensure_forkable_start_method() -> None:
+    """На macOS huey-consumer (-k process) не стартует при дефолтном 'spawn':
+    он пиклит объект процесса, а `Consumer._create_process` держит непиклящееся
+    замыкание `_run` → `AttributeError: Can't pickle local object` ДО загрузки
+    модели. Форсим 'fork' — тогда pickle не нужен. На Linux (прод/Docker) fork и
+    так дефолт, вызов идемпотентен → прод не затронут.
+
+    Fork-безопасность CoreFoundation/Metal: модель грузится уже в форкнутом
+    worker'е (`@gpu_huey.on_startup`), а в лаунчере torch/Metal не импортированы
+    (lib-as-truth) → на момент fork Obj-C ещё не инициализирован. Страхуемся
+    `OBJC_DISABLE_INITIALIZE_FORK_SAFETY`, чтобы дочерний форк не падал на
+    инициализации Obj-C-раннтайма при импорте torch.
+    """
+    if sys.platform != "darwin":
+        return
+
+    import multiprocessing as mp
+
+    os.environ.setdefault("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", "YES")
+    try:
+        mp.set_start_method("fork", force=True)
+    except (RuntimeError, ValueError):  # уже сконфигурировано/недоступно — не фатально
+        pass
 
 
 def main(argv: Optional[list] = None) -> None:
@@ -34,6 +60,9 @@ def main(argv: Optional[list] = None) -> None:
     # Boot-guard: при -w>1 / -k!=process бросает RuntimeError → ненулевой выход
     # ДО импорта очереди и загрузки модели.
     assert_gpu_worker_config(args.worker_type, args.workers)
+
+    # macOS: fork-старт до создания Consumer (иначе -k process не пиклится).
+    _ensure_forkable_start_method()
 
     from huey.consumer import Consumer
 

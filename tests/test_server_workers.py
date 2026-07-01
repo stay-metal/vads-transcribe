@@ -97,6 +97,46 @@ def test_run_gpu_worker_boot_guard_aborts_thread():
     assert "RuntimeError" in r.stderr
 
 
+def test_ensure_forkable_forces_fork_on_darwin(monkeypatch):
+    # F1: на macOS форсим fork-старт (иначе huey -k process не пиклится при spawn).
+    import multiprocessing as mp
+
+    from gigaam_transcriber.server import run_gpu_worker
+
+    calls = []
+
+    def _fake_set(method, force=False):
+        calls.append((method, force))
+
+    monkeypatch.setattr(run_gpu_worker.sys, "platform", "darwin")
+    monkeypatch.setattr(mp, "set_start_method", _fake_set)
+    monkeypatch.delenv("OBJC_DISABLE_INITIALIZE_FORK_SAFETY", raising=False)
+
+    run_gpu_worker._ensure_forkable_start_method()
+
+    assert calls == [("fork", True)]
+    assert run_gpu_worker.os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] == "YES"
+
+
+def test_ensure_forkable_noop_on_linux(monkeypatch):
+    # Прод (Linux): fork уже дефолт — start-method НЕ трогаем.
+    import multiprocessing as mp
+
+    from gigaam_transcriber.server import run_gpu_worker
+
+    calls = []
+
+    def _fake_set(method, force=False):
+        calls.append((method, force))
+
+    monkeypatch.setattr(run_gpu_worker.sys, "platform", "linux")
+    monkeypatch.setattr(mp, "set_start_method", _fake_set)
+
+    run_gpu_worker._ensure_forkable_start_method()
+
+    assert calls == []
+
+
 def test_tasks_module_exposes_two_queues_without_model(tmp_path):
     import os
     import subprocess
