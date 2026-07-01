@@ -25,7 +25,7 @@ _SAFE_GALLERY_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 _CHUNK = 1 << 20  # 1 МиБ
 
 
-def _voice_label(filename: str) -> str:
+def _voice_label(filename: str | None) -> str:
     return unicodedata.normalize("NFC", Path(filename or "voice").stem) or "voice"
 
 

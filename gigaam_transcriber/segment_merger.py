@@ -323,18 +323,18 @@ class SegmentMerger:
             return transcription_segments
 
         # Создаём список всех границ спикеров
-        speaker_boundaries = set()
-        for seg in speaker_segments:
-            speaker_boundaries.add(seg.start)
-            speaker_boundaries.add(seg.end)
-        speaker_boundaries = sorted(speaker_boundaries)
+        boundary_set: set[float] = set()
+        for sp_seg in speaker_segments:
+            boundary_set.add(sp_seg.start)
+            boundary_set.add(sp_seg.end)
+        sorted_boundaries = sorted(boundary_set)
 
         # Выравниваем границы транскрипции
-        for seg in transcription_segments:
-            # Выравниваем start
-            seg.start = self._find_nearest_boundary(seg.start, speaker_boundaries, tolerance=0.3)
-            # Выравниваем end
-            seg.end = self._find_nearest_boundary(seg.end, speaker_boundaries, tolerance=0.3)
+        for tr_seg in transcription_segments:
+            tr_seg.start = self._find_nearest_boundary(
+                tr_seg.start, sorted_boundaries, tolerance=0.3
+            )
+            tr_seg.end = self._find_nearest_boundary(tr_seg.end, sorted_boundaries, tolerance=0.3)
 
         return transcription_segments
 

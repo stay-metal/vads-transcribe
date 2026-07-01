@@ -142,7 +142,7 @@ __all__ = [
 # Удобная функция для быстрого старта
 def transcribe(
     input_path: str,
-    output_path: str = None,
+    output_path: str | None = None,
     diarization: DiarizationMode = "none",
     model_name: str = "v3_e2e_rnnt",
     **kwargs,

@@ -14,6 +14,7 @@ import json
 import os
 import unicodedata
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -105,7 +106,7 @@ def _default_factory(token: str) -> YaDiskClient:
     return YaDiskClient(token)
 
 
-def _build_client(request: Request) -> object | None:
+def _build_client(request: Request) -> Any:  # duck-typed клиент (реальный/фейк)
     """Собрать клиент из сохранённого (расшифрованного) токена или None."""
     settings = request.app.state.settings
     auth = get_yandex_auth(settings.db_path)
@@ -377,7 +378,7 @@ def ingest_pull(
             tracks=tracks,
             title=tracks[0]["name"] if tracks else None,
         )
-        params = {"glossary": True}
+        params: dict[str, Any] = {"glossary": True}
         if kind == "single":
             params["diarization"] = "pyannote" if os.getenv("HF_TOKEN") else "none"
         job_id = create_job(db, mode=kind, source="yandex", recording_id=rec_id, params=params)

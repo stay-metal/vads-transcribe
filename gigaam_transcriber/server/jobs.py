@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, Response
@@ -92,7 +93,7 @@ def submit_job(
     if mode == "single" and payload.diarization != "none" and not os.getenv("HF_TOKEN"):
         raise HTTPException(400, "Диаризация требует HF_TOKEN")
 
-    params = {
+    params: dict[str, Any] = {
         "glossary": payload.glossary,
         "min_segment_gap": payload.min_segment_gap,
     }
