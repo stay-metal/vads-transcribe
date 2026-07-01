@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Link, useParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import WaveSurfer from "wavesurfer.js";
 import RegionsPlugin from "wavesurfer.js/dist/plugins/regions.esm.js";
 import TimelinePlugin from "wavesurfer.js/dist/plugins/timeline.esm.js";
@@ -49,6 +49,22 @@ export default function TranscriptViewer() {
   });
   const job = jobQ.data;
   const done = job?.state === "done";
+
+  // SSE: живой прогресс без клиентского поллинга (refetchInterval выше — fallback).
+  const qc = useQueryClient();
+  React.useEffect(() => {
+    if (!jobId || done) return;
+    const es = new EventSource(`/api/jobs/${jobId}/events`);
+    es.addEventListener("job", (e) => {
+      try {
+        qc.setQueryData(["job", jobId], JSON.parse((e as MessageEvent).data));
+      } catch {
+        /* игнорируем битое событие */
+      }
+    });
+    es.onerror = () => es.close(); // fallback на poll
+    return () => es.close();
+  }, [jobId, done, qc]);
 
   const resultQ = useQuery({
     queryKey: ["result", jobId],

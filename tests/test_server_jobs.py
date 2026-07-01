@@ -381,6 +381,19 @@ def test_single_metadata_records_diarization(tmp_path):
     assert res["metadata"]["diarization"] == "none"
 
 
+def test_job_events_sse_stream(tmp_path):
+    # SSE: поток отдаёт состояние джобы и закрывается на терминальном (done).
+    c = _make(tmp_path)  # sync → джоба сразу done
+    up = c.post("/api/uploads", files=[_file("mix.wav")]).json()
+    job_id = c.post(
+        "/api/jobs", json={"recording_id": up["recording_id"], "diarization": "none"}
+    ).json()["job_id"]
+    with c.stream("GET", f"/api/jobs/{job_id}/events") as r:
+        assert r.status_code == 200
+        body = "".join(r.iter_text())
+    assert "done" in body and job_id in body
+
+
 def test_endpoint_coverage_list_audio_srt(tmp_path):
     c, _ = _make_with_settings(tmp_path, FakeTranscriber())
     up = c.post("/api/uploads", files=[_file("Алиса.wav"), _file("Боб.wav")]).json()
