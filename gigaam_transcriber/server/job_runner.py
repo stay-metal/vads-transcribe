@@ -55,6 +55,16 @@ def _stage_callback(settings: Settings, job_id: str):
     return cb
 
 
+def _single_stage_callback(settings: Settings, job_id: str):
+    """progress_callback(current,total) для single — per-VAD-сегмент → ASR 45..85."""
+
+    def cb(current: int, total: int) -> None:
+        frac = (current / total) if total else 0.0
+        update_job_progress(settings.db_path, job_id, "asr", min(45 + int(frac * 40), 85))
+
+    return cb
+
+
 def process_job(settings: Settings, job_id: str, transcriber) -> None:
     db = settings.db_path
     if transcriber is None:
@@ -106,6 +116,7 @@ def process_job(settings: Settings, job_id: str, transcriber) -> None:
                 voiceprint_gallery=params.get("voiceprint_gallery"),
                 resume=True,
                 manifest_path=job["manifest_path"],
+                progress_callback=_single_stage_callback(settings, job_id),
             )
 
         update_job_progress(db, job_id, "formatting", 95)

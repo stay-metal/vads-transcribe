@@ -71,6 +71,7 @@ server = [
     "python-multipart>=0.0.9",
     "cryptography>=42",
     "yadisk>=3.4.1",
+    "sse-starlette>=2.0",
 ]
 dev = [
     "pytest>=7.0.0",

@@ -357,6 +357,7 @@ class GigaAMTranscriber:
         resume: bool = False,
         manifest_path: str | Path | None = None,
         emit_l0: bool = False,
+        progress_callback: Callable[[int, int], None] | None = None,
     ) -> TranscriptionResult:
         """
         Универсальный метод транскрипции.
@@ -390,6 +391,9 @@ class GigaAMTranscriber:
         self._onnx_int8 = onnx_int8
         self._onnx_encoder = onnx_encoder
         self._word_timestamps = word_timestamps
+        # Прогресс по VAD-сегментам (opt-in): cb(current,total) в longform-декоде.
+        # Только сайд-эффект — текст/argmax/декод не трогает (I1).
+        self._progress_cb = progress_callback
 
         # Валидация
         self._validate_input(input_path)
@@ -647,6 +651,7 @@ class GigaAMTranscriber:
         self._onnx_int8 = False
         self._onnx_encoder = False  # иначе stale True из прошлого transcribe(onnx_encoder=True)
         self._word_timestamps = False
+        self._progress_cb = None  # route_a тикает своим per-track cb, не single-per-сегментным
         all_segments: list[TranscriptionSegment] = []
         failed_tracks: list[dict[str, str]] = []
         total = len(tracks)
@@ -906,6 +911,13 @@ class GigaAMTranscriber:
                 ):
                     seg_start, seg_end = boundaries[idx]
                     idx += 1
+                    # Прогресс по VAD-сегментам (opt-in) — сайд-эффект, декод/текст не трогаем (I1).
+                    cb = getattr(self, "_progress_cb", None)
+                    if cb is not None:
+                        try:
+                            cb(idx, len(boundaries))
+                        except Exception:
+                            pass
                     if text and text.strip():
                         word_segs = None
                         if words:

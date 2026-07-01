@@ -152,6 +152,39 @@ def get_one(job_id: str, request: Request, user: str = Depends(require_session))
     return _public_job(job)
 
 
+@router.get("/api/jobs/{job_id}/events")
+async def job_events(job_id: str, request: Request, user: str = Depends(require_session)):
+    """SSE-проекция прогресса: поток событий вместо клиентского поллинга. Сервер
+    поллит строку джобы раз в секунду и шлёт при изменении (state/stage_pct); на
+    терминальном состоянии — финальное событие и закрытие. За nginx нужен
+    `proxy_buffering off` (см. deploy/nginx.conf), иначе события копятся в буфере."""
+    import asyncio
+
+    from sse_starlette.sse import EventSourceResponse
+
+    settings = request.app.state.settings
+
+    async def event_gen():
+        last = None
+        while True:
+            if await request.is_disconnected():
+                break
+            job = get_job(settings.db_path, job_id)
+            if job is None:
+                yield {"event": "error", "data": json.dumps({"detail": "Джоба не найдена"})}
+                break
+            pub = _public_job(job)
+            snap = (pub["state"], pub["stage_pct"])
+            if snap != last:
+                last = snap
+                yield {"event": "job", "data": json.dumps(pub, ensure_ascii=False)}
+            if pub["state"] in ("done", "error", "canceled"):
+                break
+            await asyncio.sleep(1.0)
+
+    return EventSourceResponse(event_gen())
+
+
 @router.post("/api/jobs/{job_id}/cancel")
 def cancel(job_id: str, request: Request, user: str = Depends(require_session)) -> dict:
     settings = request.app.state.settings
