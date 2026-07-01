@@ -47,8 +47,9 @@ class Settings:
 
     # --- директории/данные ---
     data_dir: Path = field(default_factory=lambda: Path.home() / ".dialogscribe")
-    db_path: Path | None = None  # app.sqlite; None → data_dir/app.sqlite
-    ready_flag_path: Path | None = None  # флаг тёплой модели; None → data_dir/worker.ready
+    # Производные от data_dir (вычисляются в __post_init__) — всегда Path, не init-параметры.
+    db_path: Path = field(init=False)  # app.sqlite
+    ready_flag_path: Path = field(init=False)  # флаг тёплой модели
 
     # --- сетевые/безопасность ---
     cookie_secure: bool = True  # cookie Secure (отключать только в dev по HTTP)
@@ -69,12 +70,8 @@ class Settings:
 
     def __post_init__(self) -> None:
         self.data_dir = Path(self.data_dir)
-        if self.db_path is None:
-            self.db_path = self.data_dir / "app.sqlite"
-        if self.ready_flag_path is None:
-            self.ready_flag_path = self.data_dir / "worker.ready"
-        self.db_path = Path(self.db_path)
-        self.ready_flag_path = Path(self.ready_flag_path)
+        self.db_path = self.data_dir / "app.sqlite"
+        self.ready_flag_path = self.data_dir / "worker.ready"
 
     @classmethod
     def from_env(cls) -> Settings:

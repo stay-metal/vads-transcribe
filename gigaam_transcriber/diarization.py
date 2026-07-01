@@ -420,7 +420,7 @@ class HybridDiarization:
             return [SpeakerSegment(start=s, end=e, speaker="Спикер №1") for s, e in speech_segments]
 
         # Кластеризация
-        embeddings = np.array(embeddings)
+        embeddings = np.array(embeddings)  # type: ignore[assignment]
         n_clusters = min(num_speakers, len(embeddings))
 
         clustering = AgglomerativeClustering(

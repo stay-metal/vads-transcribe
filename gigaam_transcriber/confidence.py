@@ -68,7 +68,7 @@ class ConfidentRNNTGreedyDecoding(RNNTGreedyDecoding):
             if fresh:
                 g, hidden = head.decoder.predict(None, None, batch_size=len(batch_idx))
             else:
-                labels = torch.cat([last_label[i] for i in batch_idx], dim=0)  # [b, 1]
+                labels = torch.cat([last_label[i] for i in batch_idx], dim=0)  # type: ignore[misc]  # [b,1]
                 state = self._cat_states([dec_state[i] for i in batch_idx])
                 g, hidden = head.decoder.predict(labels, state, batch_size=len(batch_idx))
 

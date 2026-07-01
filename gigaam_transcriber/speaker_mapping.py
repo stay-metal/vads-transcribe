@@ -58,7 +58,7 @@ def assign_speakers_by_overlap(
                 overlap_by_speaker[sp.speaker] = overlap_by_speaker.get(sp.speaker, 0.0) + overlap
 
         if overlap_by_speaker:
-            best_speaker = max(overlap_by_speaker, key=overlap_by_speaker.get)
+            best_speaker = max(overlap_by_speaker, key=lambda s: overlap_by_speaker[s])
             seg.speaker = best_speaker
             seg.speaker_confidence = min(overlap_by_speaker[best_speaker] / duration, 1.0)
         elif fill_nearest:

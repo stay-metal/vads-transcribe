@@ -179,8 +179,8 @@ class AudioProcessor:
         self,
         input_path: Path | str,
         output_path: Path | str | None = None,
-        sample_rate: int = None,
-        channels: int = None,
+        sample_rate: int | None = None,
+        channels: int | None = None,
         audio_filter: str | None = None,
     ) -> Path:
         """

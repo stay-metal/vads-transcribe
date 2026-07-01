@@ -22,7 +22,7 @@ router = APIRouter()
 _CHUNK = 1 << 20  # 1 МиБ
 
 
-def _participant_name(filename: str) -> str:
+def _participant_name(filename: str | None) -> str:
     stem = Path(filename or "track").stem
     return unicodedata.normalize("NFC", stem) or "track"
 

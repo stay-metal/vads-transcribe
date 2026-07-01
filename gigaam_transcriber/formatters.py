@@ -271,14 +271,8 @@ def save_result(
     """
     path = Path(path)
 
-    if output_format is None:
-        # Определение по расширению
-        ext_map = {
-            ".txt": "txt",
-            ".json": "json",
-            ".srt": "srt",
-            ".vtt": "vtt",
-        }
-        output_format = ext_map.get(path.suffix.lower(), "txt")
+    # Определение формата по расширению, если не задан явно.
+    ext_map = {".txt": "txt", ".json": "json", ".srt": "srt", ".vtt": "vtt"}
+    fmt: str = output_format or ext_map.get(path.suffix.lower(), "txt")
 
-    return result.save(path, output_format)
+    return result.save(path, fmt)

@@ -52,7 +52,7 @@ class UnsupportedFormatError(TranscriberError):
 class DiarizationError(TranscriberError):
     """Ошибка при диаризации спикеров."""
 
-    def __init__(self, message: str, cause: Exception = None):
+    def __init__(self, message: str, cause: Exception | None = None):
         self.cause = cause
         full_message = f"Ошибка диаризации: {message}"
         if cause:
@@ -73,7 +73,7 @@ class HFTokenMissingError(DiarizationError):
 class ModelLoadError(TranscriberError):
     """Ошибка при загрузке модели."""
 
-    def __init__(self, model_name: str, cause: Exception = None):
+    def __init__(self, model_name: str, cause: Exception | None = None):
         self.model_name = model_name
         self.cause = cause
         message = f"Не удалось загрузить модель '{model_name}'"
@@ -85,7 +85,7 @@ class ModelLoadError(TranscriberError):
 class AudioProcessingError(TranscriberError):
     """Ошибка при обработке аудио."""
 
-    def __init__(self, message: str, file_path: str = None, cause: Exception = None):
+    def __init__(self, message: str, file_path: str | None = None, cause: Exception | None = None):
         self.file_path = file_path
         self.cause = cause
         full_message = "Ошибка обработки аудио"
@@ -126,7 +126,7 @@ class EmptyFileError(TranscriberError):
 class EmptyAudioError(TranscriberError):
     """Аудио не содержит речи или полностью тихое."""
 
-    def __init__(self, file_path: str = None):
+    def __init__(self, file_path: str | None = None):
         self.file_path = file_path
         message = "Аудио не содержит распознаваемой речи"
         if file_path:

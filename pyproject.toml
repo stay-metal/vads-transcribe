@@ -143,7 +143,9 @@ ignore = ["E501", "B008", "E402", "B904", "N806", "E741"]
 
 [tool.mypy]
 python_version = "3.10"
-warn_return_any = true
+# warn_return_any выкл: torch/numpy/gigaam/speechbrain без stubs возвращают Any —
+# no-any-return был бы шумом на границе с нетипизированными ML-зависимостями.
+warn_return_any = false
 warn_unused_configs = true
 ignore_missing_imports = true
 

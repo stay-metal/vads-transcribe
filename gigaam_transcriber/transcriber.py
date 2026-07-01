@@ -123,8 +123,8 @@ class GigaAMTranscriber:
 
         # Lazy-loaded компоненты
         self._model = None
-        self._audio_processor = None
-        self._diarization_manager = None
+        self._audio_processor: AudioProcessor | None = None
+        self._diarization_manager: DiarizationManager | None = None
 
         # Состояние GPU→CPU fallback (#14, L1). _intended_device — устройство, на которое
         # репарация вернёт модель на границе джобы после прошлого аварийного отката на CPU
@@ -221,22 +221,24 @@ class GigaAMTranscriber:
     @property
     def audio_processor(self) -> AudioProcessor:
         """Процессор аудио (ленивая загрузка)."""
-        if self._audio_processor is None:
-            self._audio_processor = AudioProcessor()
-        return self._audio_processor
+        ap = self._audio_processor
+        if ap is None:
+            ap = self._audio_processor = AudioProcessor()
+        return ap
 
     @property
     def diarization_manager(self) -> DiarizationManager:
         """Менеджер диаризации (ленивая загрузка)."""
-        if self._diarization_manager is None:
-            self._diarization_manager = DiarizationManager(
+        dm = self._diarization_manager
+        if dm is None:
+            dm = self._diarization_manager = DiarizationManager(
                 hf_token=self.hf_token,
                 device=self.diar_device or self.device,
                 embedding_batch_size=self.embedding_batch_size,
                 segmentation_batch_size=self.segmentation_batch_size,
                 embedding_backend=self.embedding_backend,
             )
-        return self._diarization_manager
+        return dm
 
     def _load_model(self):
         """Загрузка GigaAM модели."""
@@ -928,7 +930,7 @@ class GigaAMTranscriber:
                                     start=round(w.start + seg_start, 3),
                                     end=round(w.end + seg_start, 3),
                                 )
-                                for w in words
+                                for w in words  # type: ignore[attr-defined]
                             ]
                         segments.append(
                             TranscriptionSegment(
@@ -1225,8 +1227,8 @@ class GigaAMTranscriber:
         import torch
 
         buffer = []
-        buffer_duration = 0
-        current_time = 0
+        buffer_duration = 0.0
+        current_time = 0.0
         chunk_samples = int(chunk_duration * sample_rate)
 
         for chunk in audio_iterator:

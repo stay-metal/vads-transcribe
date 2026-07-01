@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from .config import Settings
 
@@ -64,7 +65,7 @@ def clear_ready_flag(ready_flag_path: Path) -> None:
 
 def warm_up(
     settings: Settings,
-    transcriber_factory: Callable[[Settings], object] | None = None,
+    transcriber_factory: Callable[[Settings], Any] | None = None,
 ):
     """Прогреть тёплый singleton и выставить ready-флаг (для /readyz).
 
