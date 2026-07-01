@@ -243,3 +243,80 @@ def test_fernet_key_required_for_serve(tmp_path):
     )
     problems = s.validate_for_serve()
     assert any("FERNET_KEY" in p for p in problems)
+
+
+# --------------------------------------------------------------------------- #
+# Авто-watch (M6 v1.x)
+# --------------------------------------------------------------------------- #
+class WatchFake:
+    """Клиент для авто-watch: watch_dir содержит одну папку-запись с 2 дорожками."""
+
+    def __init__(self, rev=5, md5="x"):
+        self.rev = rev
+        self.md5 = md5
+
+    def get_meta(self, path):
+        return {"name": Path(path).name, "path": path, "type": "dir", "revision": self.rev, "resource_id": "m"}
+
+    def listdir(self, path):
+        if path == "/watch":
+            return [{"name": "meeting", "path": "/watch/meeting", "type": "dir", "revision": self.rev, "resource_id": "m"}]
+        return [
+            {"name": "Алиса.m4a", "path": f"{path}/Алиса.m4a", "type": "file", "revision": self.rev, "md5": self.md5, "size": 10},
+            {"name": "Боб.m4a", "path": f"{path}/Боб.m4a", "type": "file", "revision": self.rev, "md5": self.md5, "size": 10},
+        ]
+
+
+def test_ingest_source_get_put(tmp_path):
+    c, _ = _make(tmp_path)
+    assert c.get("/api/ingest/source").json()["configured"] is False
+    r = c.put("/api/ingest/source", json={"watch_dir": "/watch", "enabled": True, "poll_interval": 120})
+    assert r.status_code == 200
+    got = c.get("/api/ingest/source").json()
+    assert got["configured"] is True and got["watch_dir"] == "/watch" and got["enabled"] is True
+    assert got["poll_interval"] == 120
+
+
+def test_auto_watch_stability_window_then_claim(tmp_path):
+    c, settings = _make(tmp_path)
+    c.put("/api/ingest/source", json={"watch_dir": "/watch", "enabled": True})
+    from gigaam_transcriber.server.repository import update_ingest
+    from gigaam_transcriber.server.yandex import poll_ingest_sources
+
+    enq = []
+
+    def enq_io(s, k, t):
+        enq.append((s, k, t))
+        update_ingest(settings.db_path, s, status="downloaded")  # симуляция download
+
+    fake = WatchFake()
+    # 1-й проход — сигнатура впервые, ещё не устоялось (cnt=1 < 2) → без клейма
+    assert poll_ingest_sources(settings, fake, enq_io) == []
+    assert enq == []
+    # 2-й проход — сигнатура неизменна → клейм + enqueue (route_a: 2 дорожки)
+    res2 = poll_ingest_sources(settings, fake, enq_io)
+    assert any(x["status"] == "pulling" for x in res2)
+    assert len(enq) == 1 and enq[0][1] == "route_a"
+    # 3-й проход — запись уже скачана → дедуп по path:revision, без второго enqueue
+    poll_ingest_sources(settings, fake, enq_io)
+    assert len(enq) == 1
+
+
+def test_auto_watch_unstable_never_claims(tmp_path):
+    c, settings = _make(tmp_path)
+    c.put("/api/ingest/source", json={"watch_dir": "/watch", "enabled": True})
+    from gigaam_transcriber.server.yandex import poll_ingest_sources
+
+    enq = []
+    fake = WatchFake(md5=None)  # файлы ещё дозаливаются → сигнатура None
+    for _ in range(3):
+        assert poll_ingest_sources(settings, fake, lambda s, k, t: enq.append((s, k, t))) == []
+    assert enq == []
+
+
+def test_auto_watch_disabled_noop(tmp_path):
+    c, settings = _make(tmp_path)
+    c.put("/api/ingest/source", json={"watch_dir": "/watch", "enabled": False})
+    from gigaam_transcriber.server.yandex import poll_ingest_sources
+
+    assert poll_ingest_sources(settings, WatchFake(), lambda *a: None) == []

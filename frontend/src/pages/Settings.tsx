@@ -10,6 +10,7 @@ import {
   SectionTitle,
   Spinner,
   Tabs,
+  Toggle,
   Mono,
   ErrorCard,
 } from "@/components/ui";
@@ -279,8 +280,71 @@ function SourcesSection() {
           {pullMsg && <p className="mt-3 text-sm text-ink-muted">{pullMsg}</p>}
         </Card>
       )}
+      {status?.connected && <AutoWatchCard />}
       {error && <ErrorCard title={error} />}
     </div>
+  );
+}
+
+function AutoWatchCard() {
+  const { data, isLoading, refetch } = useQuery({ queryKey: ["ingest-source"], queryFn: api.getIngestSource });
+  const [watchDir, setWatchDir] = React.useState("");
+  const [enabled, setEnabled] = React.useState(false);
+  const [poll, setPoll] = React.useState(300);
+  const [busy, setBusy] = React.useState(false);
+  const [saved, setSaved] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (data?.configured) {
+      setWatchDir(data.watch_dir ?? "");
+      setEnabled(!!data.enabled);
+      setPoll(data.poll_interval ?? 300);
+    }
+  }, [data]);
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    setSaved(false);
+    try {
+      await api.putIngestSource({ watch_dir: watchDir, enabled, poll_interval: poll });
+      setSaved(true);
+      refetch();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Не удалось сохранить");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (isLoading) return null;
+
+  return (
+    <Card className="space-y-4 p-5">
+      <div>
+        <div className="text-sm font-medium text-ink">Авто-подтягивание</div>
+        <p className="text-xs text-ink-muted">
+          Периодически проверяет папку и сама заводит записи, когда файлы дозалились.
+        </p>
+      </div>
+      <Field label="Папка наблюдения" hint="Путь на Яндекс.Диске под разрешённой областью.">
+        <Input value={watchDir} placeholder="/Записи созвонов" onChange={(e) => setWatchDir(e.target.value)} />
+      </Field>
+      <Toggle
+        checked={enabled}
+        onChange={setEnabled}
+        label="Включить авто-подтягивание"
+        hint="Опрос идёт на фоне (io-очередь), новые записи появятся во «Записях»."
+      />
+      {err && <ErrorCard title={err} />}
+      <div className="flex items-center gap-3">
+        <Button onClick={save} disabled={busy || !watchDir}>
+          {busy ? "Сохраняем…" : "Сохранить"}
+        </Button>
+        {saved && <span className="text-sm text-emerald-600">Сохранено</span>}
+      </div>
+    </Card>
   );
 }
 

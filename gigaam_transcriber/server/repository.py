@@ -363,3 +363,52 @@ def update_ingest(
         conn.execute(
             f"UPDATE ingest_seen SET {', '.join(sets)} WHERE surrogate_id=?", vals
         )
+
+
+# --- Авто-watch: singleton-конфиг источника + окно стабильности ---
+def get_ingest_source(db_path: Path) -> Optional[dict]:
+    with get_conn(db_path) as conn:
+        row = conn.execute("SELECT * FROM ingest_sources WHERE id=1").fetchone()
+    src = _row_to_dict(row)
+    if src is not None:
+        src["enabled"] = bool(src["enabled"])
+    return src
+
+
+def upsert_ingest_source(
+    db_path: Path, watch_dir: str, enabled: bool, poll_interval: int, default_params_json: str
+) -> None:
+    with get_conn(db_path) as conn:
+        conn.execute(
+            "INSERT INTO ingest_sources(id, watch_dir, enabled, poll_interval, default_params, "
+            "updated_at) VALUES(1,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+            "watch_dir=excluded.watch_dir, enabled=excluded.enabled, "
+            "poll_interval=excluded.poll_interval, default_params=excluded.default_params, "
+            "updated_at=excluded.updated_at",
+            (watch_dir, 1 if enabled else 0, int(poll_interval), default_params_json, _now()),
+        )
+
+
+def record_stability(db_path: Path, path: str, signature: str) -> int:
+    """Инкремент stable_count при неизменной signature, иначе сброс в 1. Возвращает счётчик.
+
+    Так авто-watch клеймит запись только когда её сигнатура (size|revision|child|md5)
+    не менялась ≥N поллингов — файлы дозалились, ревизия устоялась."""
+    with get_conn(db_path) as conn:
+        row = conn.execute(
+            "SELECT signature, stable_count FROM ingest_stability WHERE path=?", (path,)
+        ).fetchone()
+        if row is not None and row["signature"] == signature:
+            cnt = int(row["stable_count"]) + 1
+            conn.execute(
+                "UPDATE ingest_stability SET stable_count=?, updated_at=? WHERE path=?",
+                (cnt, _now(), path),
+            )
+            return cnt
+        conn.execute(
+            "INSERT INTO ingest_stability(path, signature, stable_count, updated_at) "
+            "VALUES(?,?,1,?) ON CONFLICT(path) DO UPDATE SET signature=excluded.signature, "
+            "stable_count=1, updated_at=excluded.updated_at",
+            (path, signature, _now()),
+        )
+        return 1

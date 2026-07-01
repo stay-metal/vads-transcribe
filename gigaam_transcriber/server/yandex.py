@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import unicodedata
 from pathlib import Path
@@ -24,12 +25,18 @@ from .repository import (
     claim_ingest,
     create_job,
     create_recording,
+    get_ingest_source,
     get_yandex_auth,
+    record_stability,
     set_job_dirs,
     set_recording_latest_job,
     set_yandex_token,
     update_ingest,
+    upsert_ingest_source,
 )
+
+# Авто-watch: клеймим запись только когда её сигнатура неизменна ≥ N поллингов.
+STABILITY_THRESHOLD = 2
 
 router = APIRouter()
 
@@ -154,6 +161,46 @@ def browse(request: Request, path: str = "/", user: str = Depends(require_sessio
     return {"path": path, "entries": entries}
 
 
+class IngestError(Exception):
+    """Ошибка ingestion c HTTP-статусом (роут маппит в HTTPException)."""
+
+    def __init__(self, status: int, detail: str):
+        super().__init__(detail)
+        self.status = status
+        self.detail = detail
+
+
+def ingest_path(settings, client, path: str, enqueue_io) -> dict:
+    """Общий путь ingestion (ручной pull и авто-watch): claim по `path:revision` +
+    enqueue скачивания. Не HTTP-зависима — бросает IngestError, не HTTPException."""
+    try:
+        meta = client.get_meta(path)
+    except Exception:
+        raise IngestError(404, "Путь не найден на Яндекс.Диске")
+
+    if meta["type"] == "dir":
+        entries = [e for e in client.listdir(path)
+                   if e["type"] == "file" and Path(e["name"]).suffix.lower() in AUDIO_EXT]
+        if not entries:
+            raise IngestError(400, "В папке нет аудио-дорожек")
+        kind = "route_a" if len(entries) > 1 else "single"
+        revision = str(meta.get("revision") or max((e.get("revision") or 0) for e in entries))
+    else:
+        entries = [meta | {"name": meta["name"], "path": meta["path"]}]
+        kind = "single"
+        revision = str(meta.get("revision") or 0)
+
+    ingest_key = f"{path}:{revision}"
+    surrogate = claim_ingest(settings.db_path, ingest_key, meta.get("resource_id"))
+    if surrogate is None:  # уже подтягивали эту ревизию — дедуп, без второй джобы
+        return {"status": "already_seen", "ingest_key_seen": True}
+
+    remote_tracks = [{"name": _name(e["name"]), "remote": e["path"]} for e in entries]
+    if enqueue_io is not None:
+        enqueue_io(surrogate, kind, remote_tracks)
+    return {"status": "pulling", "surrogate_id": surrogate, "kind": kind}
+
+
 @router.post("/api/yandex/pull")
 def pull(payload: PullIn, request: Request, user: str = Depends(require_session)) -> dict:
     settings = request.app.state.settings
@@ -163,35 +210,114 @@ def pull(payload: PullIn, request: Request, user: str = Depends(require_session)
     client = _build_client(request)
     if client is None:
         raise HTTPException(400, "Токен Яндекс.Диска не настроен")
-
-    # Определяем: папка с дорожками (Route A) или одиночный файл (single).
-    try:
-        meta = client.get_meta(payload.path)
-    except Exception:
-        raise HTTPException(404, "Путь не найден на Яндекс.Диске")
-
-    if meta["type"] == "dir":
-        entries = [e for e in client.listdir(payload.path)
-                   if e["type"] == "file" and Path(e["name"]).suffix.lower() in AUDIO_EXT]
-        if not entries:
-            raise HTTPException(400, "В папке нет аудио-дорожек")
-        kind = "route_a" if len(entries) > 1 else "single"
-        revision = str(meta.get("revision") or max((e.get("revision") or 0) for e in entries))
-    else:
-        entries = [meta | {"name": meta["name"], "path": meta["path"]}]
-        kind = "single"
-        revision = str(meta.get("revision") or 0)
-
-    ingest_key = f"{payload.path}:{revision}"
-    surrogate = claim_ingest(settings.db_path, ingest_key, meta.get("resource_id"))
-    if surrogate is None:  # уже подтягивали эту ревизию — дедуп, без второй джобы
-        return {"status": "already_seen", "ingest_key_seen": True}
-
-    remote_tracks = [{"name": _name(e["name"]), "remote": e["path"]} for e in entries]
     enqueue_io = getattr(request.app.state, "enqueue_io", None)
-    if enqueue_io is not None:
-        enqueue_io(surrogate, kind, remote_tracks)
-    return {"status": "pulling", "surrogate_id": surrogate, "kind": kind}
+    try:
+        return ingest_path(settings, client, payload.path, enqueue_io)
+    except IngestError as e:
+        raise HTTPException(e.status, e.detail)
+
+
+# --------------------------------------------------------------------------- #
+# Авто-watch: поллер + конфиг источника
+# --------------------------------------------------------------------------- #
+def _signature(client, entry: dict) -> Optional[str]:
+    """Сигнатура (тип|размер/дети|ревизия) элемента верхнего уровня watch_dir.
+
+    None → элемент ещё НЕ стабилен: не аудио, либо файл(ы) без md5 (дозаливается).
+    Клеймим только когда сигнатура неизменна ≥ STABILITY_THRESHOLD поллингов."""
+    if entry["type"] == "dir":
+        try:
+            children = client.listdir(entry["path"])
+        except Exception:
+            return None
+        audio = [c for c in children
+                 if c["type"] == "file" and Path(c["name"]).suffix.lower() in AUDIO_EXT]
+        if not audio or any(c.get("md5") is None for c in audio):
+            return None  # пусто или файлы ещё грузятся
+        rev = max((c.get("revision") or 0) for c in audio)
+        return f"dir|{len(audio)}|{rev}"
+    if Path(entry["name"]).suffix.lower() not in AUDIO_EXT or entry.get("md5") is None:
+        return None
+    return f"file|{entry.get('size') or 0}|{entry.get('revision') or 0}"
+
+
+def poll_ingest_sources(settings, client, enqueue_io) -> List[dict]:
+    """Один проход авто-watch: для стабильных элементов watch_dir → ingest_path.
+
+    Идемпотентно: `ingest_seen` дедупит по `path:revision`, `ingest_stability`
+    держит окно (клеймим лишь после N неизменных поллингов). Ошибки элемента
+    не роняют проход."""
+    src = get_ingest_source(settings.db_path)
+    if not src or not src["enabled"]:
+        return []
+    watch_dir = src["watch_dir"]
+    try:
+        entries = client.listdir(watch_dir)
+    except Exception:
+        return []
+    out: List[dict] = []
+    for e in entries:
+        if not _under_watch_dir(e["path"], watch_dir):
+            continue
+        sig = _signature(client, e)
+        if sig is None:
+            continue
+        if record_stability(settings.db_path, e["path"], sig) < STABILITY_THRESHOLD:
+            continue  # ещё не устоялось
+        try:
+            out.append({"path": e["path"], **ingest_path(settings, client, e["path"], enqueue_io)})
+        except IngestError as ie:
+            out.append({"path": e["path"], "status": "error", "detail": ie.detail})
+    return out
+
+
+def build_client_from_settings(settings, factory=_default_factory):
+    """Собрать клиент из сохранённого токена вне HTTP-контекста (для periodic_task)."""
+    auth = get_yandex_auth(settings.db_path)
+    if auth is None:
+        return None
+    token = crypto.decrypt(settings.fernet_key, auth["token_enc"])
+    return factory(token) if token else None
+
+
+class IngestSourceIn(BaseModel):
+    watch_dir: str
+    enabled: bool = False
+    poll_interval: int = 300
+    default_params: dict = {}
+
+
+@router.get("/api/ingest/source")
+def get_source(request: Request, user: str = Depends(require_session)) -> dict:
+    src = get_ingest_source(request.app.state.settings.db_path)
+    if src is None:
+        return {"configured": False}
+    return {
+        "configured": True,
+        "watch_dir": src["watch_dir"],
+        "enabled": src["enabled"],
+        "poll_interval": src["poll_interval"],
+        "default_params": json.loads(src["default_params"] or "{}"),
+    }
+
+
+@router.put("/api/ingest/source")
+def put_source(
+    payload: IngestSourceIn, request: Request, user: str = Depends(require_session)
+) -> dict:
+    settings = request.app.state.settings
+    watch_dir = os.getenv("DIALOGSCRIBE_YANDEX_WATCH_DIR", "/")
+    # Конфигурируемый watch_dir обязан быть под серверным allowlist (анти-обход).
+    if not _under_watch_dir(payload.watch_dir, watch_dir):
+        raise HTTPException(403, "watch_dir вне разрешённой области")
+    upsert_ingest_source(
+        settings.db_path,
+        payload.watch_dir,
+        payload.enabled,
+        max(60, int(payload.poll_interval)),
+        json.dumps(payload.default_params, ensure_ascii=False),
+    )
+    return {"configured": True, "watch_dir": payload.watch_dir, "enabled": payload.enabled}
 
 
 def _name(filename: str) -> str:

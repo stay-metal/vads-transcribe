@@ -80,6 +80,23 @@ CREATE TABLE IF NOT EXISTS ingest_seen (
     job_id       TEXT,
     created_at   TEXT NOT NULL
 );
+
+-- Авто-watch (M6 v1.x): singleton-конфиг источника + окно стабильности.
+CREATE TABLE IF NOT EXISTS ingest_sources (
+    id             INTEGER PRIMARY KEY CHECK (id = 1),  -- один watch_dir (личная папка)
+    watch_dir      TEXT NOT NULL,
+    enabled        INTEGER NOT NULL DEFAULT 0,
+    poll_interval  INTEGER NOT NULL DEFAULT 300,        -- сек между поллингами
+    default_params TEXT NOT NULL DEFAULT '{}',          -- json-параметры авто-джоб
+    updated_at     TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS ingest_stability (
+    path         TEXT PRIMARY KEY,        -- элемент верхнего уровня watch_dir
+    signature    TEXT NOT NULL,           -- (size|revision|child_count|md5_ready)
+    stable_count INTEGER NOT NULL DEFAULT 0,  -- сколько поллингов подряд неизменно
+    updated_at   TEXT NOT NULL
+);
 """
 
 

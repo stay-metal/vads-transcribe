@@ -56,6 +56,29 @@ def prune_retention_task() -> None:
     prune_retention(Settings.from_env())
 
 
+@io_huey.periodic_task(crontab(minute="*/5"))
+@io_huey.lock_task("ingest-poll")
+def poll_yandex_task() -> None:
+    """Авто-watch: периодический опрос watch_dir Я.Диска (io, без GPU).
+
+    lock_task — чтобы медленный проход не наслаивался на следующий. Клеймит
+    только устоявшиеся записи (окно стабильности), дедуп через ingest_seen."""
+    from .config import Settings
+    from .repository import get_ingest_source
+    from .yandex import build_client_from_settings, poll_ingest_sources
+
+    settings = Settings.from_env()
+    src = get_ingest_source(settings.db_path)
+    if not src or not src["enabled"]:
+        return
+    client = build_client_from_settings(settings)
+    if client is None:
+        return
+    poll_ingest_sources(
+        settings, client, enqueue_io=lambda s, k, t: pull_recording(s, k, t)
+    )
+
+
 @io_huey.task()
 def pull_recording(surrogate_id: str, kind: str, remote_tracks: list) -> str:
     """io-задача: скачать запись с Яндекс.Диска (без GPU) → enqueue gpu run_job."""

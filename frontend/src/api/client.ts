@@ -120,7 +120,24 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path }),
     }),
+
+  // --- Авто-watch источника (периодический опрос watch_dir) ---
+  getIngestSource: () => req<IngestSource>("/api/ingest/source"),
+  putIngestSource: (body: { watch_dir: string; enabled: boolean; poll_interval: number }) =>
+    req<{ configured: boolean; watch_dir: string; enabled: boolean }>("/api/ingest/source", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
 };
+
+export interface IngestSource {
+  configured: boolean;
+  watch_dir?: string;
+  enabled?: boolean;
+  poll_interval?: number;
+  default_params?: Record<string, unknown>;
+}
 
 export interface Glossary {
   people: Record<string, string>;
