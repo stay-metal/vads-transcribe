@@ -195,6 +195,19 @@ function SourcesSection() {
   const [entries, setEntries] = React.useState<YaEntry[] | null>(null);
   const [browsing, setBrowsing] = React.useState(false);
   const [pullMsg, setPullMsg] = React.useState<string | null>(null);
+  const [oauthMsg, setOauthMsg] = React.useState<string | null>(null);
+
+  // Результат OAuth-редиректа (?yandex=connected|error) → баннер + обновление статуса.
+  React.useEffect(() => {
+    const p = new URLSearchParams(window.location.search).get("yandex");
+    if (p === "connected") {
+      setOauthMsg("Яндекс.Диск подключён.");
+      refetch();
+    } else if (p === "error") {
+      setOauthMsg("Не удалось подключить Яндекс.Диск — попробуйте ещё раз.");
+    }
+    if (p) window.history.replaceState({}, "", "/settings");
+  }, [refetch]);
 
   async function saveToken() {
     setBusy(true);
@@ -238,23 +251,46 @@ function SourcesSection() {
 
   return (
     <div className="space-y-5">
-      <Card className="p-5">
-        <div className="mb-3 flex items-center gap-2">
+      {oauthMsg && (
+        <Card className="border-coral-500/25 bg-coral-soft px-4 py-3 text-sm text-ink">{oauthMsg}</Card>
+      )}
+      <Card className="space-y-4 p-5">
+        <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-ink">Яндекс.Диск</span>
           {status?.connected ? (
-            <Badge tone={status.check_ok ? "green" : "amber"}>{status.check_ok ? "подключён" : "токен недействителен"}</Badge>
+            <Badge tone={status.check_ok ? "green" : "amber"}>
+              {status.check_ok ? "подключён" : "токен недействителен"}
+            </Badge>
           ) : (
             <Badge>не подключён</Badge>
           )}
         </div>
-        <Field label="Токен доступа" hint="Хранится зашифрованным (Fernet). Проверяется перед сохранением.">
-          <div className="flex gap-2">
-            <Input type="password" value={token} placeholder="OAuth-токен" onChange={(e) => setToken(e.target.value)} />
-            <Button onClick={saveToken} disabled={busy || !token}>
-              {busy ? "…" : "Сохранить"}
+
+        {status?.oauth_available ? (
+          <>
+            <p className="text-xs leading-snug text-ink-muted">
+              Подключение через OAuth — токен доступа обновляется автоматически.
+            </p>
+            <Button onClick={() => (window.location.href = "/api/yandex/oauth/start")}>
+              <IconCloud size={17} />
+              {status.connected ? "Переподключить" : "Подключить Яндекс.Диск"}
             </Button>
-          </div>
-        </Field>
+          </>
+        ) : (
+          <Field label="Токен доступа" hint="Хранится зашифрованным (Fernet). Проверяется перед сохранением.">
+            <div className="flex gap-2">
+              <Input
+                type="password"
+                value={token}
+                placeholder="OAuth-токен"
+                onChange={(e) => setToken(e.target.value)}
+              />
+              <Button onClick={saveToken} disabled={busy || !token}>
+                {busy ? "…" : "Сохранить"}
+              </Button>
+            </div>
+          </Field>
+        )}
       </Card>
 
       {status?.connected && (

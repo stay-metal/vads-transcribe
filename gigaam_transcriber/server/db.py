@@ -65,10 +65,12 @@ CREATE TABLE IF NOT EXISTS speaker_edits (
 
 -- Яндекс.Диск (M5): singleton-токен (Fernet) + claim-граница ingest.
 CREATE TABLE IF NOT EXISTS yandex_auth (
-    id         INTEGER PRIMARY KEY CHECK (id = 1),
-    token_enc  TEXT NOT NULL,
-    check_ok   INTEGER NOT NULL DEFAULT 0,
-    updated_at TEXT NOT NULL
+    id                INTEGER PRIMARY KEY CHECK (id = 1),
+    token_enc         TEXT NOT NULL,
+    refresh_token_enc TEXT,               -- OAuth refresh-токен (Fernet), M6 v1.x
+    expires_at        TEXT,               -- ISO-время истечения access_token
+    check_ok          INTEGER NOT NULL DEFAULT 0,
+    updated_at        TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS ingest_seen (
@@ -112,12 +114,22 @@ def connect(db_path: Path) -> sqlite3.Connection:
 
 
 def init_db(db_path: Path) -> None:
-    """Создать схему, если её нет."""
+    """Создать схему, если её нет, и накатить лёгкие миграции (ADD COLUMN)."""
     conn = connect(db_path)
     try:
         conn.executescript(_SCHEMA)
+        _migrate(conn)
     finally:
         conn.close()
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Идемпотентные ADD COLUMN для БД, созданных до появления новых колонок."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(yandex_auth)")}
+    if "refresh_token_enc" not in cols:
+        conn.execute("ALTER TABLE yandex_auth ADD COLUMN refresh_token_enc TEXT")
+    if "expires_at" not in cols:
+        conn.execute("ALTER TABLE yandex_auth ADD COLUMN expires_at TEXT")
 
 
 @contextmanager
