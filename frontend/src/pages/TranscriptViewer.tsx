@@ -254,6 +254,14 @@ function Viewer({
             </Button>
           </a>
         ))}
+        {typeof meta.l0_sha256 === "string" && (
+          <a href={api.downloadUrl(jobId, "l0")} title="Сырой L0-субстрат (evidence) + sha256">
+            <Button variant="outline" size="sm">
+              L0
+              <Mono className="text-ink-muted/70">.v1.jsonl</Mono>
+            </Button>
+          </a>
+        )}
       </Card>
 
       {/* Реплики */}

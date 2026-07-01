@@ -236,12 +236,25 @@ def download(
     format: str = "txt",
     user: str = Depends(require_session),
 ):
-    if format not in ("txt", "json", "srt", "vtt"):
-        raise HTTPException(400, "Формат: txt|json|srt|vtt")
+    if format not in ("txt", "json", "srt", "vtt", "l0", "sha256"):
+        raise HTTPException(400, "Формат: txt|json|srt|vtt|l0|sha256")
     settings = request.app.state.settings
     job = get_job(settings.db_path, job_id)
     if job is None:
         raise HTTPException(404, "Джоба не найдена")
+
+    # L0-субстрат — сырой evidence-файл (speaker-overlay НЕ применяется).
+    if format in ("l0", "sha256"):
+        out_dir = job.get("output_dir")
+        if not out_dir:
+            raise HTTPException(404, "L0-субстрат недоступен")
+        fname = "transcript.v1.jsonl" if format == "l0" else "transcript.v1.jsonl.sha256"
+        fpath = Path(out_dir) / fname
+        if not fpath.exists():
+            raise HTTPException(404, "L0-субстрат не создавался для этой джобы")
+        media_type = "application/x-ndjson" if format == "l0" else "text/plain; charset=utf-8"
+        return FileResponse(fpath, media_type=media_type, filename=fname)
+
     edits = get_speaker_edits(settings.db_path, job_id)
     data = _load_result_with_overlay(job, edits)
 

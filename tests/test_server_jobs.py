@@ -304,7 +304,42 @@ def test_single_opt_in_toggles_passthrough(tmp_path, monkeypatch):
     assert kw["word_timestamps"] is True
     assert kw["preclean"] is True
     assert kw["backend"] == "onnx"
-    assert kw["emit_l0"] is True
+    assert "emit_l0" not in kw  # L0 пишет job_runner (transcribe без output_path его пропускал)
+
+
+def test_l0_substrate_written_and_downloadable(tmp_path, monkeypatch):
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    c, _ = _make_with_settings(tmp_path, FakeTranscriber())
+    up = c.post("/api/uploads", files=[_file("mix.wav")]).json()
+    job_id = c.post(
+        "/api/jobs",
+        json={"recording_id": up["recording_id"], "diarization": "none", "emit_l0": True},
+    ).json()["job_id"]
+
+    # sha256 попал в metadata как verifiable-признак «L0 создан».
+    res = c.get(f"/api/jobs/{job_id}/result").json()
+    sha = res["metadata"].get("l0_sha256")
+    assert isinstance(sha, str) and len(sha) == 64
+
+    # download l0 → jsonl-файл; sha256 → sidecar с тем же хэшем.
+    l0 = c.get(f"/api/jobs/{job_id}/download", params={"format": "l0"})
+    assert l0.status_code == 200
+    assert "transcript.v1.jsonl" in l0.headers["content-disposition"]
+    assert l0.text.strip()  # непустой jsonl
+    shafile = c.get(f"/api/jobs/{job_id}/download", params={"format": "sha256"})
+    assert shafile.status_code == 200
+    assert shafile.text.strip() == sha
+
+
+def test_l0_absent_without_flag(tmp_path):
+    c, _ = _make_with_settings(tmp_path, FakeTranscriber())
+    up = c.post("/api/uploads", files=[_file("mix.wav")]).json()
+    job_id = c.post(
+        "/api/jobs", json={"recording_id": up["recording_id"], "diarization": "none"}
+    ).json()["job_id"]
+    res = c.get(f"/api/jobs/{job_id}/result").json()
+    assert "l0_sha256" not in res.get("metadata", {})
+    assert c.get(f"/api/jobs/{job_id}/download", params={"format": "l0"}).status_code == 404
 
 
 def test_metadata_source_not_leaked(tmp_path):

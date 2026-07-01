@@ -104,7 +104,6 @@ def process_job(settings: Settings, job_id: str, transcriber) -> None:
                 onnx_int8=params.get("onnx_int8", False),
                 voiceprint=params.get("voiceprint", False),
                 voiceprint_gallery=params.get("voiceprint_gallery"),
-                emit_l0=params.get("emit_l0", False),
                 resume=True,
                 manifest_path=job["manifest_path"],
             )
@@ -113,8 +112,31 @@ def process_job(settings: Settings, job_id: str, transcriber) -> None:
         # Не утекать абсолютные серверные пути клиенту (result.json отдаётся как есть).
         if isinstance(result.metadata, dict):
             result.metadata.pop("source", None)
+
+        # L0-субстрат (opt-in): пишем сами — transcribe() без output_path его пропускает.
+        # sha256 кладём в metadata ДО to_json() как verifiable-признак «L0 создан» для UI.
+        l0_records = None
+        if params.get("emit_l0"):
+            try:
+                from gigaam_transcriber.l0 import build_l0, l0_sha256
+
+                l0_records = build_l0(result)
+                if isinstance(result.metadata, dict):
+                    result.metadata["l0_sha256"] = l0_sha256(l0_records)
+            except Exception as l0e:  # noqa: BLE001 — L0 best-effort, не роняем джобу
+                logger.warning("L0 build не удался для джобы %s: %s", job_id, l0e)
+                l0_records = None
+
         result_json = output_dir / "result.json"
         result_json.write_text(result.to_json(), encoding="utf-8")
+
+        if l0_records is not None:
+            try:
+                from gigaam_transcriber.l0 import write_l0
+
+                write_l0(l0_records, output_dir / "transcript.v1.jsonl")
+            except Exception as l0e:  # noqa: BLE001
+                logger.warning("L0 write не удался для джобы %s: %s", job_id, l0e)
 
         # FINALIZE: downmix дорожек в один воспроизводимый файл (не критично для done).
         audio_out = None
