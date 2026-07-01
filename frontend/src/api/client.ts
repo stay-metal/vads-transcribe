@@ -162,6 +162,7 @@ export interface Glossary {
 export interface YandexStatus {
   connected: boolean;
   check_ok: boolean;
+  oauth_available?: boolean;
 }
 export interface YaEntry {
   name: string;

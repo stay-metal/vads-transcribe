@@ -296,14 +296,43 @@ def set_speaker_edit(db_path: Path, job_id: str, original_label: str, new_label:
 # --------------------------------------------------------------------------- #
 # Яндекс.Диск (M5): токен + claim-граница ingest
 # --------------------------------------------------------------------------- #
-def set_yandex_token(db_path: Path, token_enc: str, check_ok: bool) -> None:
+def set_yandex_token(
+    db_path: Path,
+    token_enc: str,
+    check_ok: bool,
+    *,
+    refresh_token_enc: str | None = None,
+    expires_at: str | None = None,
+) -> None:
     with get_conn(db_path) as conn:
         conn.execute(
-            "INSERT INTO yandex_auth(id, token_enc, check_ok, updated_at) VALUES(1,?,?,?) "
-            "ON CONFLICT(id) DO UPDATE SET token_enc=excluded.token_enc, "
-            "check_ok=excluded.check_ok, updated_at=excluded.updated_at",
-            (token_enc, 1 if check_ok else 0, _now()),
+            "INSERT INTO yandex_auth(id, token_enc, refresh_token_enc, expires_at, check_ok, "
+            "updated_at) VALUES(1,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+            "token_enc=excluded.token_enc, refresh_token_enc=excluded.refresh_token_enc, "
+            "expires_at=excluded.expires_at, check_ok=excluded.check_ok, "
+            "updated_at=excluded.updated_at",
+            (token_enc, refresh_token_enc, expires_at, 1 if check_ok else 0, _now()),
         )
+
+
+def update_yandex_access(
+    db_path: Path, token_enc: str, expires_at: str, refresh_token_enc: str | None = None
+) -> None:
+    """Обновить access-токен (и опц. refresh) после refresh_token-обмена — не трогая
+    прочие поля, если refresh не менялся."""
+    with get_conn(db_path) as conn:
+        if refresh_token_enc is not None:
+            conn.execute(
+                "UPDATE yandex_auth SET token_enc=?, refresh_token_enc=?, expires_at=?, "
+                "check_ok=1, updated_at=? WHERE id=1",
+                (token_enc, refresh_token_enc, expires_at, _now()),
+            )
+        else:
+            conn.execute(
+                "UPDATE yandex_auth SET token_enc=?, expires_at=?, check_ok=1, updated_at=? "
+                "WHERE id=1",
+                (token_enc, expires_at, _now()),
+            )
 
 
 def get_yandex_auth(db_path: Path) -> dict | None:

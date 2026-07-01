@@ -139,7 +139,8 @@ def test_crypto_roundtrip():
 
 def test_status_without_token(tmp_path):
     c, _ = _make(tmp_path)
-    assert c.get("/api/yandex/status").json() == {"connected": False, "check_ok": False}
+    r = c.get("/api/yandex/status").json()
+    assert r["connected"] is False and r["check_ok"] is False
 
 
 def test_put_token_invalid(tmp_path):
@@ -401,3 +402,75 @@ def test_auto_watch_disabled_noop(tmp_path):
     from gigaam_transcriber.server.yandex import poll_ingest_sources
 
     assert poll_ingest_sources(settings, WatchFake(), lambda *a: None) == []
+
+
+# --------------------------------------------------------------------------- #
+# OAuth (Authorization Code + refresh)
+# --------------------------------------------------------------------------- #
+def _oauth_env(monkeypatch):
+    monkeypatch.setenv("YANDEX_OAUTH_CLIENT_ID", "cid")
+    monkeypatch.setenv("YANDEX_OAUTH_CLIENT_SECRET", "secret")
+
+
+def test_oauth_start_without_config_400(tmp_path, monkeypatch):
+    monkeypatch.delenv("YANDEX_OAUTH_CLIENT_ID", raising=False)
+    c, _ = _make(tmp_path)
+    assert c.get("/api/yandex/oauth/start", follow_redirects=False).status_code == 400
+
+
+def test_oauth_start_and_callback_stores_tokens(tmp_path, monkeypatch):
+    _oauth_env(monkeypatch)
+    c, settings = _make(tmp_path)
+
+    r = c.get("/api/yandex/oauth/start", follow_redirects=False)
+    assert r.status_code in (302, 307)
+    loc = r.headers["location"]
+    assert "oauth.yandex.ru/authorize" in loc and "cloud_api" in loc
+    from urllib.parse import parse_qs, urlparse
+
+    state = parse_qs(urlparse(loc).query)["state"][0]
+
+    from gigaam_transcriber.server import yandex
+
+    monkeypatch.setattr(
+        yandex,
+        "_token_request",
+        lambda data: {"access_token": "AT", "refresh_token": "RT", "expires_in": 3600},
+    )
+    cb = c.get(f"/api/yandex/oauth/callback?code=CODE&state={state}", follow_redirects=False)
+    assert cb.status_code == 303 and "yandex=connected" in cb.headers["location"]
+
+    assert c.get("/api/yandex/status").json()["connected"] is True
+    auth = get_yandex_auth(settings.db_path)
+    assert crypto.decrypt(settings.fernet_key, auth["token_enc"]) == "AT"
+    assert crypto.decrypt(settings.fernet_key, auth["refresh_token_enc"]) == "RT"
+
+
+def test_oauth_callback_bad_state_400(tmp_path, monkeypatch):
+    _oauth_env(monkeypatch)
+    c, _ = _make(tmp_path)
+    c.get("/api/yandex/oauth/start", follow_redirects=False)  # ставит state-cookie
+    cb = c.get("/api/yandex/oauth/callback?code=CODE&state=подделка", follow_redirects=False)
+    assert cb.status_code == 400
+
+
+def test_oauth_refresh_on_expiry(tmp_path, monkeypatch):
+    _oauth_env(monkeypatch)
+    c, settings = _make(tmp_path)
+    from datetime import datetime, timedelta, timezone
+
+    from gigaam_transcriber.server import yandex
+    from gigaam_transcriber.server.repository import set_yandex_token
+
+    past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    set_yandex_token(
+        settings.db_path,
+        crypto.encrypt(settings.fernet_key, "OLD"),
+        check_ok=True,
+        refresh_token_enc=crypto.encrypt(settings.fernet_key, "RT"),
+        expires_at=past,
+    )
+    monkeypatch.setattr(
+        yandex, "_token_request", lambda data: {"access_token": "NEW", "expires_in": 3600}
+    )
+    assert yandex._valid_access_token(settings) == "NEW"  # refresh сработал
