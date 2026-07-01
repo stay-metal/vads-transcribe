@@ -99,3 +99,13 @@ def pull_recording(surrogate_id: str, kind: str, remote_tracks: list) -> str:
         enqueue_gpu=lambda job_id: run_job(job_id),
     )
     return surrogate_id
+
+
+@io_huey.task()
+def build_gallery_task(name: str, tracks: dict) -> str:
+    """io-задача: собрать ECAPA-галерею из образцов (без GPU) и сохранить."""
+    from .config import Settings
+    from .gallery_builder import build_gallery_job
+
+    build_gallery_job(Settings.from_env(), name, tracks)
+    return name
