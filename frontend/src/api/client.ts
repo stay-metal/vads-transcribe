@@ -43,6 +43,16 @@ export const api = {
   logout: () => req<void>("/api/auth/logout", { method: "POST" }),
   me: () => req<{ user: string }>("/api/auth/me"),
 
+  // Готовность тёплой модели (200 → true, 503 → false). Не кидает на 503.
+  async ready(): Promise<boolean> {
+    try {
+      const r = await fetch("/readyz", { credentials: "same-origin" });
+      return r.ok;
+    } catch {
+      return false;
+    }
+  },
+
   upload(files: File[]): Promise<UploadResult> {
     const fd = new FormData();
     files.forEach((f) => fd.append("files", f));
@@ -82,4 +92,47 @@ export const api = {
   audioUrl: (id: string) => `/api/jobs/${id}/audio`,
   downloadUrl: (id: string, format: string) =>
     `/api/jobs/${id}/download?format=${format}`,
+
+  // --- Глоссарий (канонизация имён/терминов, страж I1) ---
+  getGlossary: () => req<Glossary>("/api/glossary"),
+  putGlossary: (body: Glossary) =>
+    req<Glossary>("/api/glossary", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+
+  // --- Яндекс.Диск (ручной ingestion) ---
+  yandexStatus: () => req<YandexStatus>("/api/yandex/status"),
+  putYandexToken: (token: string) =>
+    req<YandexStatus>("/api/yandex/token", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    }),
+  yandexBrowse: (path: string) =>
+    req<{ path: string; entries: YaEntry[] }>(
+      `/api/yandex/browse?path=${encodeURIComponent(path)}`,
+    ),
+  yandexPull: (path: string) =>
+    req<{ status: string; surrogate_id?: string; kind?: string }>("/api/yandex/pull", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    }),
 };
+
+export interface Glossary {
+  people: Record<string, string>;
+  terms: Record<string, string>;
+}
+export interface YandexStatus {
+  connected: boolean;
+  check_ok: boolean;
+}
+export interface YaEntry {
+  name: string;
+  path: string;
+  type: "file" | "dir";
+  size?: number | null;
+}

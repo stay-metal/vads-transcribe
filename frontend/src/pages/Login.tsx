@@ -2,7 +2,8 @@ import * as React from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useAuth } from "@/auth";
-import { Button, Card, Input } from "@/components/ui";
+import { Button, Card, Input, ErrorCard } from "@/components/ui";
+import { AtomBadge } from "@/components/brand";
 
 export default function Login() {
   const { setUser } = useAuth();
@@ -21,7 +22,7 @@ export default function Login() {
       setUser(r.user);
       nav("/");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ошибка входа");
+      setError(err instanceof Error ? err.message : "Не удалось войти");
     } finally {
       setBusy(false);
     }
@@ -29,29 +30,44 @@ export default function Login() {
 
   return (
     <div className="flex min-h-screen items-center justify-center p-4">
-      <Card className="w-full max-w-sm p-6">
-        <h1 className="mb-1 text-xl font-semibold">DialogScribe</h1>
-        <p className="mb-4 text-sm text-slate-500">Вход</p>
-        <form onSubmit={submit} className="space-y-3">
-          <Input
-            placeholder="Пользователь"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            autoComplete="username"
-          />
-          <Input
-            type="password"
-            placeholder="Пароль"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete="current-password"
-          />
-          {error && <div className="text-sm text-red-600">{error}</div>}
-          <Button type="submit" className="w-full" disabled={busy}>
-            {busy ? "Вход…" : "Войти"}
-          </Button>
-        </form>
-      </Card>
+      <div className="w-full max-w-sm animate-fade-up">
+        <div className="mb-8 flex flex-col items-center text-center">
+          <AtomBadge size={56} className="mb-4" />
+          <h1 className="text-2xl font-semibold tracking-tightest text-ink">dialogscribe</h1>
+          <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-muted">
+            Понимаю AI
+          </p>
+          <p className="mt-4 text-[15px] leading-snug text-ink-muted">
+            Расшифровка созвонов с именами участников.
+            <br />
+            Каждый голос — на своём месте.
+          </p>
+        </div>
+
+        <Card className="p-6">
+          <form onSubmit={submit} className="space-y-3">
+            <Input
+              placeholder="Пользователь"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              autoComplete="username"
+              aria-label="Пользователь"
+            />
+            <Input
+              type="password"
+              placeholder="Пароль"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              aria-label="Пароль"
+            />
+            {error && <ErrorCard title={error} />}
+            <Button type="submit" className="w-full" disabled={busy}>
+              {busy ? "Входим…" : "Войти"}
+            </Button>
+          </form>
+        </Card>
+      </div>
     </div>
   );
 }

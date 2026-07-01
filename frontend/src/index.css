@@ -3,11 +3,94 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light dark;
+  --coral: #f4725e;
+  --coral-mark: #f37662;
+  --coral-500: #e75740;
+  --coral-600: #e64f37;
+  --coral-soft: #fdefed;
+  --canvas: #fcfcfd;
+  --ink: #202732;
+  --muted: #606e80;
+  --line: #dee3e8;
+  --azure: #759ec7;
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
 }
 
 body {
   margin: 0;
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  @apply bg-slate-50 text-slate-900;
+  color: var(--ink);
+  background-color: var(--canvas);
+  /* тёплый радиальный «медицинский» блик сверху (бренд-мотив), закреплён */
+  background-image: radial-gradient(
+    58rem 34rem at 50% -14rem,
+    rgba(244, 114, 94, 0.07),
+    rgba(244, 114, 94, 0) 62%
+  );
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Голубой focus-ring — намеренный холодный контрапункт кораллу (бренд). */
+:focus-visible {
+  outline: 2px solid var(--azure);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* Табличные цифры для всех mono-данных (таймкоды/ID/метрики). */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Тонкий скроллбар в тон линиям. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #cdd4dc transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #cdd4dc;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #b6bfc9;
+  background-clip: content-box;
+}
+
+/* Просмотрщик: активная реплика (karaoke по playhead). */
+.seg-active {
+  background: var(--coral-soft);
+  box-shadow: inset 2px 0 0 0 var(--coral-500);
+}
+
+/* Confidence-heatmap: подсветка сомнительных мест (чисто визуально — I1). */
+.heatmap .seg-low {
+  background-image: linear-gradient(to bottom, transparent 62%, rgba(231, 87, 64, 0.22) 62%);
+}
+.heatmap .seg-mid {
+  background-image: linear-gradient(to bottom, transparent 62%, rgba(217, 138, 43, 0.2) 62%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

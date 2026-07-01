@@ -10,6 +10,7 @@ import Upload from "./pages/Upload";
 import RouteAConfirm from "./pages/RouteAConfirm";
 import SingleSubmit from "./pages/SingleSubmit";
 import TranscriptViewer from "./pages/TranscriptViewer";
+import Settings from "./pages/Settings";
 import "./index.css";
 
 const qc = new QueryClient({
@@ -35,6 +36,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
               <Route path="/recordings/:recId/confirm" element={<RouteAConfirm />} />
               <Route path="/recordings/:recId/single" element={<SingleSubmit />} />
               <Route path="/jobs/:jobId" element={<TranscriptViewer />} />
+              <Route path="/settings" element={<Settings />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

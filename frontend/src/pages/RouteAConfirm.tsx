@@ -3,12 +3,14 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type { TrackRef } from "@/api/types";
-import { Button, Card, Input } from "@/components/ui";
+import { Button, Card, Input, SectionTitle, Spinner } from "@/components/ui";
+import { IconTrash, IconUsers } from "@/components/icons";
+import { SPEAKER_COLORS } from "@/lib/utils";
 
 export default function RouteAConfirm() {
   const { recId } = useParams<{ recId: string }>();
   const nav = useNavigate();
-  const { data } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ["tracks", recId],
     queryFn: () => api.discoverTracks(recId!),
     enabled: !!recId,
@@ -32,35 +34,51 @@ export default function RouteAConfirm() {
   }
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-lg font-semibold">Участники (Route A)</h2>
-      <p className="text-sm text-slate-500">
-        Имена дорожек станут метками спикеров (ground-truth, без HF_TOKEN).
-      </p>
-      <Card className="divide-y divide-slate-100">
+    <div className="space-y-6">
+      <SectionTitle
+        eyebrow="По дорожкам"
+        title="Участники"
+        desc="Имена дорожек станут метками спикеров — точными и без диаризации. Поправьте, если нужно."
+      />
+
+      {isLoading && (
+        <div className="flex items-center gap-2 text-sm text-ink-muted">
+          <Spinner className="h-4 w-4" /> Читаем дорожки…
+        </div>
+      )}
+
+      <Card className="divide-y divide-line/70 overflow-hidden">
         {tracks.map((t, i) => (
-          <div key={t.id} className="flex items-center gap-3 p-3">
-            <span className="w-8 text-sm text-slate-400">#{i + 1}</span>
+          <div key={t.id} className="flex items-center gap-3 px-4 py-3">
+            <span
+              className="h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-white"
+              style={{ background: SPEAKER_COLORS[i % SPEAKER_COLORS.length] }}
+            />
             <Input
               value={t.name}
+              placeholder="Имя участника"
               onChange={(e) =>
-                setTracks((ts) =>
-                  ts.map((x) => (x.id === t.id ? { ...x, name: e.target.value } : x)),
-                )
+                setTracks((ts) => ts.map((x) => (x.id === t.id ? { ...x, name: e.target.value } : x)))
               }
             />
-            <Button
-              variant="ghost"
+            <button
               onClick={() => setTracks((ts) => ts.filter((x) => x.id !== t.id))}
+              className="shrink-0 rounded-control p-2 text-ink-muted transition-colors hover:bg-coral-soft hover:text-coral-500"
+              aria-label="Убрать дорожку"
             >
-              Убрать
-            </Button>
+              <IconTrash size={16} />
+            </button>
           </div>
         ))}
       </Card>
-      <Button onClick={submit} disabled={busy || tracks.length === 0}>
-        {busy ? "Запуск…" : "Запустить транскрипцию"}
-      </Button>
+
+      <div className="flex items-center gap-3">
+        <Button onClick={submit} disabled={busy || tracks.length === 0}>
+          <IconUsers size={17} />
+          {busy ? "Запускаем…" : "Запустить транскрипцию"}
+        </Button>
+        <span className="text-xs text-ink-muted">{tracks.length} участников</span>
+      </div>
     </div>
   );
 }
