@@ -59,6 +59,13 @@ def _default_enqueue_io(surrogate_id: str, kind: str, remote_tracks: list):
     return pull_recording(surrogate_id, kind, remote_tracks).id
 
 
+def _default_enqueue_gallery(name: str, tracks: dict):
+    """Поставить ECAPA-сборку галереи в io-очередь (без GPU)."""
+    from .tasks import build_gallery_task
+
+    return build_gallery_task(name, tracks).id
+
+
 def create_app(settings: Settings | None = None, enqueue=None) -> FastAPI:
     settings = settings or Settings.from_env()
     settings.ensure_dirs()
@@ -74,6 +81,7 @@ def create_app(settings: Settings | None = None, enqueue=None) -> FastAPI:
     # Постановка джоб в очередь: по умолчанию huey, в тестах подменяется.
     app.state.enqueue = enqueue if enqueue is not None else _default_enqueue
     app.state.enqueue_io = _default_enqueue_io
+    app.state.enqueue_gallery = _default_enqueue_gallery
     app.state.login_throttle = LoginThrottle(
         settings.login_max_failures,
         settings.login_lockout_seconds,

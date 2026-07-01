@@ -123,6 +123,12 @@ export const api = {
 
   // --- Галереи голосов (voiceprint) ---
   listGalleries: () => req<{ galleries: Gallery[] }>("/api/galleries"),
+  createGallery: (name: string, files: File[]) => {
+    const fd = new FormData();
+    fd.append("name", name);
+    files.forEach((f) => fd.append("files", f));
+    return req<{ building: string; voices: string[] }>("/api/galleries", { method: "POST", body: fd });
+  },
   deleteGallery: (name: string) =>
     req<{ deleted: string }>(`/api/galleries/${encodeURIComponent(name)}`, { method: "DELETE" }),
 

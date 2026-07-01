@@ -362,9 +362,22 @@ function AutoWatchCard() {
 
 /* ─── Голоса (галереи voiceprint) ────────────────────────────────────── */
 function VoicesSection() {
-  const { data, isLoading, refetch } = useQuery({ queryKey: ["galleries"], queryFn: api.listGalleries });
-  const [busy, setBusy] = React.useState<string | null>(null);
+  const [building, setBuilding] = React.useState<string | null>(null);
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ["galleries"],
+    queryFn: api.listGalleries,
+    // Пока идёт сборка — поллим, пока галерея не появится в списке.
+    refetchInterval: (q) =>
+      building && !q.state.data?.galleries.some((g) => g.name === building) ? 3000 : false,
+  });
+  const galleries = data?.galleries ?? [];
 
+  // Сборка завершилась → снять индикатор.
+  React.useEffect(() => {
+    if (building && galleries.some((g) => g.name === building)) setBuilding(null);
+  }, [galleries, building]);
+
+  const [busy, setBusy] = React.useState<string | null>(null);
   async function remove(name: string) {
     setBusy(name);
     try {
@@ -376,44 +389,128 @@ function VoicesSection() {
   }
 
   if (isLoading) return <Loading label="Загрузка галерей…" />;
-  const galleries = data?.galleries ?? [];
 
   return (
     <div className="space-y-4">
-      <Card className="p-5">
-        <div className="text-sm font-medium text-ink">Галереи голосов</div>
-        <p className="mt-1 text-xs leading-snug text-ink-muted">
-          Именуют спикеров в общем миксе по образцам голосов. Создаются командой
-          <Mono className="mx-1">dialogscribe gallery build</Mono>— здесь просмотр и удаление.
-        </p>
-      </Card>
-      {galleries.length === 0 ? (
-        <Card className="px-5 py-8 text-center text-sm text-ink-muted">Пока нет галерей.</Card>
-      ) : (
-        <Card className="divide-y divide-line/70 overflow-hidden">
-          {galleries.map((g) => (
-            <div key={g.name} className="flex items-center gap-3 px-5 py-3">
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium text-ink">{g.name}</div>
-                <div className="mt-1 flex flex-wrap gap-2">
-                  {g.voices.map((v) => (
-                    <SpeakerNode key={v} name={v} size={7} />
-                  ))}
-                </div>
-              </div>
-              <button
-                onClick={() => remove(g.name)}
-                disabled={busy === g.name}
-                className="shrink-0 rounded-control p-2 text-ink-muted transition-colors hover:bg-coral-soft hover:text-coral-500"
-                aria-label="Удалить галерею"
-              >
-                <IconTrash size={16} />
-              </button>
-            </div>
-          ))}
+      <CreateGalleryCard existing={galleries.map((g) => g.name)} onBuilding={setBuilding} onDone={refetch} />
+
+      {building && (
+        <Card className="flex items-center gap-3 px-5 py-3">
+          <Spinner className="h-4 w-4" />
+          <span className="text-sm text-ink-muted">
+            Собираем галерею <span className="font-medium text-ink">{building}</span> — появится через минуту.
+          </span>
         </Card>
       )}
+
+      {galleries.length === 0 && !building ? (
+        <Card className="px-5 py-8 text-center text-sm text-ink-muted">Пока нет галерей.</Card>
+      ) : (
+        galleries.length > 0 && (
+          <Card className="divide-y divide-line/70 overflow-hidden">
+            {galleries.map((g) => (
+              <div key={g.name} className="flex items-center gap-3 px-5 py-3">
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-ink">{g.name}</div>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {g.voices.map((v) => (
+                      <SpeakerNode key={v} name={v} size={7} />
+                    ))}
+                  </div>
+                </div>
+                <button
+                  onClick={() => remove(g.name)}
+                  disabled={busy === g.name}
+                  className="shrink-0 rounded-control p-2 text-ink-muted transition-colors hover:bg-coral-soft hover:text-coral-500"
+                  aria-label="Удалить галерею"
+                >
+                  <IconTrash size={16} />
+                </button>
+              </div>
+            ))}
+          </Card>
+        )
+      )}
     </div>
+  );
+}
+
+function CreateGalleryCard({
+  existing,
+  onBuilding,
+  onDone,
+}: {
+  existing: string[];
+  onBuilding: (name: string) => void;
+  onDone: () => void;
+}) {
+  const [name, setName] = React.useState("");
+  const [files, setFiles] = React.useState<File[]>([]);
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+
+  const nameOk = /^[A-Za-z0-9_-]+$/.test(name);
+  const dup = existing.includes(name);
+
+  async function submit() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.createGallery(name, files);
+      onBuilding(name);
+      setName("");
+      setFiles([]);
+      onDone();
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Не удалось запустить сборку");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card className="space-y-4 p-5">
+      <div>
+        <div className="text-sm font-medium text-ink">Новая галерея</div>
+        <p className="mt-1 text-xs leading-snug text-ink-muted">
+          Именует спикеров в общем миксе по голосу. Загрузите по одному образцу на человека —
+          имя файла станет именем голоса.
+        </p>
+      </div>
+      <Field label="Название" hint="Латиница, цифры, дефис и подчёркивание.">
+        <Input value={name} placeholder="nasha-komanda" onChange={(e) => setName(e.target.value)} />
+      </Field>
+      <div>
+        <label className="flex cursor-pointer items-center justify-between rounded-control border border-dashed border-line px-4 py-3 text-sm transition-colors hover:bg-canvas">
+          <span className="text-ink-muted">
+            {files.length ? `Выбрано образцов: ${files.length}` : "Выбрать образцы голосов"}
+          </span>
+          <span className="text-coral-500">
+            <IconUsers size={18} />
+          </span>
+          <input
+            type="file"
+            multiple
+            accept="audio/*,video/*"
+            className="hidden"
+            onChange={(e) => setFiles(Array.from(e.target.files ?? []))}
+          />
+        </label>
+        {files.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {files.map((f, i) => (
+              <SpeakerNode key={i} name={f.name.replace(/\.[^.]+$/, "")} size={7} />
+            ))}
+          </div>
+        )}
+      </div>
+      {name && !nameOk && <p className="text-xs text-coral-600">Только латиница/цифры/-/_.</p>}
+      {dup && <p className="text-xs text-coral-600">Галерея с таким именем уже есть.</p>}
+      {err && <ErrorCard title={err} />}
+      <Button onClick={submit} disabled={busy || !nameOk || dup || files.length === 0}>
+        {busy ? "Запускаем…" : "Собрать галерею"}
+      </Button>
+    </Card>
   );
 }
 
