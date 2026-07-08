@@ -37,6 +37,69 @@ class FakeYandex:
         return {"name": "meeting", "path": path, "type": "dir", "revision": 5, "resource_id": "rd"}
 
     def listdir(self, path):
+        if "zoom" in path:  # папка Zoom: аудио + видео-дубль той же встречи (F7)
+            return [
+                {
+                    "name": "audio1791450993.m4a",
+                    "path": f"{path}/audio1791450993.m4a",
+                    "type": "file",
+                    "revision": 9,
+                    "resource_id": "za",
+                    "size": 10,
+                    "md5": "za",
+                },
+                {
+                    "name": "video1791450993.mp4",
+                    "path": f"{path}/video1791450993.mp4",
+                    "type": "file",
+                    "revision": 9,
+                    "resource_id": "zv",
+                    "size": 90,
+                    "md5": "zv",
+                },
+                {
+                    "name": "recording.conf",
+                    "path": f"{path}/recording.conf",
+                    "type": "file",
+                    "revision": 9,
+                    "resource_id": "zc",
+                    "size": 1,
+                    "md5": "zc",
+                },
+            ]
+        if "screencast" in path:  # только видео — деградация до видео-дорожки
+            return [
+                {
+                    "name": "запись.mp4",
+                    "path": f"{path}/запись.mp4",
+                    "type": "file",
+                    "revision": 4,
+                    "resource_id": "v",
+                    "size": 50,
+                    "md5": "v",
+                },
+            ]
+        if "смешанная" in path:  # несвязанное видео НЕ дубль аудио — остаётся дорожкой
+            return [
+                {
+                    "name": "интервью.mp4",
+                    "path": f"{path}/интервью.mp4",
+                    "type": "file",
+                    "revision": 6,
+                    "resource_id": "iv",
+                    "size": 70,
+                    "md5": "iv",
+                },
+                {
+                    "name": "заметка.m4a",
+                    "path": f"{path}/заметка.m4a",
+                    "type": "file",
+                    "revision": 6,
+                    "resource_id": "zm",
+                    "size": 10,
+                    "md5": "zm",
+                },
+            ]
         return [
             {
                 "name": "Алиса.m4a",
@@ -211,6 +274,117 @@ def test_pull_single_file(tmp_path):
     r = c.post("/api/yandex/pull", json={"path": "/Записи/mix.mp3"})
     assert r.status_code == 200
     assert r.json()["kind"] == "single"
+
+
+def test_pull_zoom_dir_prefers_audio_over_video(tmp_path):
+    # F7: audio*.m4a + video*.mp4 одной встречи — НЕ два «участника» route_a.
+    c, settings = _make(tmp_path)
+    c.put("/api/yandex/token", json={"token": VALID})
+    r = c.post("/api/yandex/pull", json={"path": "/Записи/zoom-встреча"})
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "single"
+    downloaded = list((Path(settings.data_dir) / "uploads" / r.json()["surrogate_id"]).iterdir())
+    assert [p.suffix for p in downloaded] == [".m4a"]  # скачано только аудио
+    jobs = c.get("/api/jobs").json()["jobs"]
+    assert len(jobs) == 1 and jobs[0]["mode"] == "single" and jobs[0]["state"] == "done"
+
+
+def test_pull_video_only_dir_still_ingests(tmp_path):
+    # Папка без чисто-аудио файлов: видео-контейнер остаётся валидным входом.
+    c, _ = _make(tmp_path)
+    c.put("/api/yandex/token", json={"token": VALID})
+    r = c.post("/api/yandex/pull", json={"path": "/Записи/screencast"})
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "single"
+
+
+def test_pull_mixed_dir_keeps_unrelated_video(tmp_path):
+    # Несвязанное видео (нет аудио-пары по stem/Zoom-ключу) — полноценная дорожка,
+    # как и до F7: интервью.mp4 не должен молча выпадать из ingest.
+    c, _ = _make(tmp_path)
+    c.put("/api/yandex/token", json={"token": VALID})
+    r = c.post("/api/yandex/pull", json={"path": "/Записи/смешанная"})
+    assert r.status_code == 200, r.text
+    assert r.json()["kind"] == "route_a"  # обе дорожки, ничего не потеряно
+
+
+def test_signature_waits_for_uploading_video_but_counts_audio_only():
+    # F7 в авто-watch: пока видео-дубль дозаливается (md5=None) — папка НЕ
+    # стабильна (ранний клейм терял бы поздние дорожки); после доливки len/rev
+    # считаются только по клеймимому аудио.
+    from gigaam_transcriber.server.yandex import _signature
+
+    class Client:
+        def __init__(self, video_md5):
+            self.video_md5 = video_md5
+
+        def listdir(self, path):
+            return [
+                {
+                    "name": "audio1791450993.m4a",
+                    "path": f"{path}/a",
+                    "type": "file",
+                    "revision": 3,
+                    "size": 10,
+                    "md5": "ok",
+                },
+                {
+                    "name": "video1791450993.mp4",
+                    "path": f"{path}/v",
+                    "type": "file",
+                    "revision": 8,
+                    "size": 99,
+                    "md5": self.video_md5,
+                },
+            ]
+
+    entry = {"type": "dir", "path": "/w/встреча", "name": "встреча"}
+    assert _signature(Client(video_md5=None), entry) is None  # видео ещё грузится
+    assert _signature(Client(video_md5="done"), entry) == "dir|1|3"  # только аудио
+
+
+def test_ingest_key_ignores_folder_revision_bump_from_video(tmp_path):
+    # Дедуп-ключ — от ревизий клеймимых файлов: доливка видео-дубля бампает
+    # ревизию ПАПКИ, но не должна порождать второй ingest той же встречи.
+    from gigaam_transcriber.server.yandex import ingest_path
+
+    _, settings = _make(tmp_path)  # инициализирует БД
+
+    class Client:
+        def __init__(self, folder_rev):
+            self.folder_rev = folder_rev
+
+        def get_meta(self, path):
+            return {
+                "name": "m",
+                "path": path,
+                "type": "dir",
+                "revision": self.folder_rev,
+                "resource_id": "rd",
+            }
+
+        def listdir(self, path):
+            return [
+                {
+                    "name": "audio1791450993.m4a",
+                    "path": f"{path}/audio1791450993.m4a",
+                    "type": "file",
+                    "revision": 3,
+                    "size": 10,
+                    "md5": "ok",
+                },
+            ]
+
+    from gigaam_transcriber.server.repository import update_ingest
+
+    r1 = ingest_path(settings, Client(folder_rev=100), "/Записи/m", None)
+    assert r1["status"] == "pulling"
+    # Скачивание завершилось (терминальный статус — иначе застрявший claim
+    # переклеймивается по дизайну).
+    update_ingest(settings.db_path, r1["surrogate_id"], status="downloaded")
+    # Видео долилось → ревизия папки 200, аудио не изменилось → дедуп.
+    r2 = ingest_path(settings, Client(folder_rev=200), "/Записи/m", None)
+    assert r2["status"] == "already_seen"
 
 
 def test_yandex_requires_auth(tmp_path):

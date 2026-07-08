@@ -11,8 +11,10 @@ paths:
 - Очереди — только через `make_gpu_huey`/`make_io_huey` (SqliteHuey «gpu»/«io») в `huey.sqlite`,
   ОТДЕЛЬНОМ от `app.sqlite` (иначе запись задач лочит прикладные записи).
 - gpu-воркер стартуй только `python -m …server.run_gpu_worker -k process -w 1`, не голым `huey_consumer`
-  (иначе boot-guard не получит `-k`/`-w`).
-- Не ослабляй `assert_gpu_worker_config`: `-w>1`/`-k≠process` → `RuntimeError` ДО загрузки модели.
+  (иначе boot-guard не получит `-k`/`-w`); на macOS лаунчер сам подменяет `process`→`thread` — Metal/MPS
+  не инициализируется в форкнутом без exec процессе (F6).
+- Не ослабляй `assert_gpu_worker_config`: `-w>1`/greenlet/gevent → `RuntimeError` ДО загрузки модели;
+  допустимы только `process`/`thread` при `-w 1` (ровно один держатель модели).
 - Тёплый singleton грей в `@gpu_huey.on_startup()` (`WARM_TRANSCRIBER`) и переиспользуй в `run_job`; не
   создавай транскрайбер per-call/через context-manager на запрос.
 - В начале `process_job` делай `claim_job` (CAS `UPDATE … WHERE state='queued'`); проиграл гонке → молча

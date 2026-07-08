@@ -20,8 +20,9 @@ Vite + React 18 + TS + Tailwind v3 + TanStack Query v5 + react-router v6 + waves
   `transcribe_route_a`) — НИКАКОГО своего декод-цикла в обёртках.
 - **api НЕ грузит модель.** В `server/` нет top-level импорта `gigaam`/`GigaAMTranscriber` — только
   lazy-import внутри huey-задач; это закреплено тестом `test_api_does_not_import_asr_model`.
-- **GPU держит один воркер.** gpu-воркер строго `-k process -w 1`; `assert_gpu_worker_config` падает ДО
-  модели при `-w>1`/`-k≠process` (GigaAMTranscriber не реентерабелен → копии в VRAM = OOM).
+- **GPU держит один воркер.** gpu-воркер строго `-w 1`; `-k process` (Linux-прод) или `-k thread`
+  (macOS: Metal/MPS не живёт в fork — лаунчер подменяет сам); `assert_gpu_worker_config` падает ДО
+  модели при `-w>1`/greenlet (GigaAMTranscriber не реентерабелен → копии в VRAM = OOM).
 - **result.json не мутируется.** Правки спикеров — overlay в памяти при чтении (ключ `original_speaker`).
 
 ---

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import unicodedata
 from pathlib import Path
@@ -22,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
+from ..exceptions import UnsupportedFormatError
 from . import crypto
 from .auth import require_session
 from .repository import (
@@ -56,6 +58,49 @@ AUDIO_EXT = {
     ".mkv",
     ".aac",
 }
+
+# Видео-контейнеры из AUDIO_EXT: одиночный файл ingest'ится как есть (ffmpeg
+# вытащит дорожку), но при pull ПАПКИ видео-ДУБЛЬ встречи (Zoom кладёт рядом
+# audio*.m4a и video*.mp4 одной записи) не должен становиться второй
+# «дорожкой» → ложный route_a (F7). Набор выводим из библиотечной константы,
+# чтобы списки форматов не расходились (exceptions — лёгкий импорт, без ML).
+VIDEO_EXT = frozenset(UnsupportedFormatError.SUPPORTED_VIDEO) & AUDIO_EXT
+
+
+def _zoom_key(name: str) -> str:
+    """Хвост-число имени по Zoom-конвенции: audio1791450993 / video1791450993 → 1791450993.
+
+    Короткие хвосты (<4 цифр, «track2») — не идентификатор: пустая строка,
+    чтобы случайное совпадение цифры не склеило несвязанные файлы."""
+    m = re.search(r"(\d{4,})$", Path(name).stem)
+    return m.group(1) if m else ""
+
+
+def _dir_audio_entries(children: list[dict]) -> list[dict]:
+    """Файлы-кандидаты ingest'а для папки: видео-дубли аудио-дорожек отсеиваются.
+
+    Видео выбрасывается ТОЛЬКО если у него есть аудио-пара (одинаковый stem или
+    Zoom-ключ «хвостовые цифры»); несвязанное видео остаётся дорожкой, как и до
+    F7. Папка из двух видео БЕЗ аудио (cloud-запись speaker_view+shared_screen)
+    по-прежнему даст route_a — известное ограничение, локальные записи Zoom
+    всегда содержат audio*.m4a.
+    """
+    files = [
+        e for e in children if e["type"] == "file" and Path(e["name"]).suffix.lower() in AUDIO_EXT
+    ]
+    audios = [e for e in files if Path(e["name"]).suffix.lower() not in VIDEO_EXT]
+    audio_keys = {Path(a["name"]).stem for a in audios} | {
+        k for a in audios if (k := _zoom_key(a["name"]))
+    }
+
+    def _is_dup_video(e: dict) -> bool:
+        if Path(e["name"]).suffix.lower() not in VIDEO_EXT:
+            return False
+        stem = Path(e["name"]).stem
+        zkey = _zoom_key(e["name"])
+        return stem in audio_keys or bool(zkey and zkey in audio_keys)
+
+    return [e for e in files if not _is_dup_video(e)]
 
 
 # --------------------------------------------------------------------------- #
@@ -365,15 +410,14 @@ def ingest_path(settings, client, path: str, enqueue_io) -> dict:
         raise IngestError(404, "Путь не найден на Яндекс.Диске")
 
     if meta["type"] == "dir":
-        entries = [
-            e
-            for e in client.listdir(path)
-            if e["type"] == "file" and Path(e["name"]).suffix.lower() in AUDIO_EXT
-        ]
+        entries = _dir_audio_entries(client.listdir(path))
         if not entries:
             raise IngestError(400, "В папке нет аудио-дорожек")
         kind = "route_a" if len(entries) > 1 else "single"
-        revision = str(meta.get("revision") or max((e.get("revision") or 0) for e in entries))
+        # Ключ дедупа — от ревизий КЛЕЙМИМЫХ файлов, не папки: доливка
+        # отфильтрованного видео-дубля бампает ревизию папки, но не должна
+        # порождать второй ingest той же встречи.
+        revision = str(max((e.get("revision") or 0) for e in entries) or meta.get("revision") or 0)
     else:
         entries = [meta | {"name": meta["name"], "path": meta["path"]}]
         kind = "single"
@@ -419,12 +463,16 @@ def _signature(client, entry: dict) -> str | None:
             children = client.listdir(entry["path"])
         except Exception:
             return None
-        audio = [
+        # len/rev — по клеймимым файлам (тот же отбор, что в ingest_path), но
+        # барьер «дозаливается» держим по ВСЕМ кандидатам включая видео-дубли:
+        # ранний клейм до конца синхронизации папки терял бы поздние дорожки.
+        all_files = [
             c
             for c in children
             if c["type"] == "file" and Path(c["name"]).suffix.lower() in AUDIO_EXT
         ]
-        if not audio or any(c.get("md5") is None for c in audio):
+        audio = _dir_audio_entries(children)
+        if not audio or any(c.get("md5") is None for c in all_files):
             return None  # пусто или файлы ещё грузятся
         rev = max((c.get("revision") or 0) for c in audio)
         return f"dir|{len(audio)}|{rev}"

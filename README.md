@@ -53,7 +53,9 @@ export DIALOGSCRIBE_COOKIE_SECURE=0 DIALOGSCRIBE_REQUIRE_HTTPS=0   # тольк�
 
 # api (uvicorn)
 dialogscribe serve --port 8000
-# gpu-worker (отдельный процесс, boot-guard -k process -w 1)
+# gpu-worker (отдельный процесс, boot-guard -k process -w 1;
+# на macOS лаунчер сам переключит воркер в -k thread — Metal/MPS не живёт в fork,
+# а Apple-GPU включается так: export DIALOGSCRIBE_DEVICE=mps)
 python -m gigaam_transcriber.server.run_gpu_worker -k process -w 1
 # frontend (dev-сервер с прокси на :8000) ИЛИ сборка в static
 cd frontend && npm install && npm run dev      # dev
