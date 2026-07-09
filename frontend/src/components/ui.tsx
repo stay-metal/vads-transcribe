@@ -37,7 +37,7 @@ export function Button({
 
 Тултип рендерится position:fixed (поверх любых overflow-контейнеров — Card
 режет absolute) и ТОЛЬКО когда виден: скрытый absolute-спан раздувал
-scroll-область таблицы. Показ — с задержкой 400 мс. */
+scroll-область таблицы. Показ — с задержкой 800 мс. */
 export function IconButton({
   label,
   className,
@@ -53,7 +53,7 @@ export function IconButton({
     timer.current = window.setTimeout(() => {
       const r = ref.current?.getBoundingClientRect();
       if (r) setTip({ x: r.left + r.width / 2, y: r.top - 6 });
-    }, 400);
+    }, 800);
   };
   const hide = () => {
     window.clearTimeout(timer.current);

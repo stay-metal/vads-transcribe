@@ -180,11 +180,7 @@ function RerunCell({ job }: { job: Job }) {
     // stopPropagation на обёртке: строка таблицы кликабельна (переход к транскрипту)
     <span className="flex items-center justify-end" onClick={(e) => e.stopPropagation()}>
       <IconButton
-        label={
-          mut.isError
-            ? "Не удалось — попробовать ещё раз"
-            : "Перетранскрибировать заново (перезапишет результат)"
-        }
+        label={mut.isError ? "Не удалось — попробовать ещё раз" : "Перезапустить"}
         onClick={() => mut.mutate()}
         disabled={mut.isPending}
       >
