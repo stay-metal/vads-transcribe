@@ -23,7 +23,7 @@ router = APIRouter()
 
 class OutputIn(BaseModel):
     mode: Literal["beside", "fixed"] = "beside"
-    subdir: str = "transcripts/bloodtranscripts"
+    subdir: str = "transcripts"
     dir: str | None = None
 
 

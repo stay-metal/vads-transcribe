@@ -65,7 +65,7 @@ class ScanProfile:
     media_suffixes: frozenset = frozenset(_MEDIA_SUFFIXES)
     skip_dirs: frozenset = frozenset(_SKIP_DIRS)
     output_mode: str = "beside"  # beside | fixed
-    output_subdir: str = "transcripts/bloodtranscripts"
+    output_subdir: str = "transcripts"
     output_dir: str | None = None  # для fixed
 
     @classmethod

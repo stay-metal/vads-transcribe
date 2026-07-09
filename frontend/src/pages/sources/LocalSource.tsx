@@ -33,7 +33,7 @@ const DEFAULT_PROFILE: ScanProfileT = {
   parts_mode: "merge",
   media_suffixes: [".m4a", ".mp4", ".mov", ".mp3", ".wav"],
   skip_dirs: ["transcripts", "done"],
-  output: { mode: "beside", subdir: "transcripts/bloodtranscripts", dir: null },
+  output: { mode: "beside", subdir: "transcripts", dir: null },
 };
 
 function profileFromData(sp?: Partial<ScanProfileT>): ScanProfileT {

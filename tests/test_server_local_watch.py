@@ -135,7 +135,7 @@ def test_poll_transcribes_into_meeting_subfolder(tmp_path):
     started = poll_local_source(settings, enqueue)
     assert len(started) == 1 and started[0]["kind"] == "route_a"
 
-    out = folder / "transcripts" / "bloodtranscripts"
+    out = folder / "transcripts"
     assert (out / "result.json").exists()
     for fmt in ("txt", "srt", "vtt"):
         assert (out / f"transcript.{fmt}").exists(), fmt
@@ -245,7 +245,7 @@ def test_symlinked_dirs_are_skipped(tmp_path):
 
 
 def test_part_layout_is_stable_regardless_of_part_count(tmp_path):
-    # Часть 1 — всегда корень bloodtranscripts/, часть N≥2 — всегда подпапка:
+    # Часть 1 — всегда корень transcripts/, часть N≥2 — всегда подпапка:
     # появление части 2 после ингеста части 1 не сдвигает её вывод.
     from gigaam_transcriber.server.local_watch import _base_output_dir
     from gigaam_transcriber.server.zoom_scan import DEFAULT_PROFILE

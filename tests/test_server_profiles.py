@@ -92,7 +92,7 @@ def test_mix_only_ignores_participant_tracks(tmp_path):
     _configure(c, watch, {"track_mode": "mix_only"})
     started = _drain(c, settings, transcriber)
     assert len(started) == 1 and started[0]["kind"] == "single"
-    data = json.loads((folder / "transcripts" / "bloodtranscripts" / "result.json").read_text())
+    data = json.loads((folder / "transcripts" / "result.json").read_text())
     # single-путь фейка: один сегмент SPEAKER_00 (микс), не route_a-имена.
     assert {s["speaker"] for s in data["segments"]} == {"SPEAKER_00"}
 
@@ -104,7 +104,7 @@ def test_separate_makes_job_per_track_without_diarization(tmp_path):
     _configure(c, watch, {"track_mode": "separate"})
     started = _drain(c, settings, transcriber)
     assert len(started) == 2 and all(s["kind"] == "single" for s in started)
-    out = folder / "transcripts" / "bloodtranscripts"
+    out = folder / "transcripts"
     assert (out / "Alice" / "result.json").exists()
     assert (out / "Bob" / "result.json").exists()
     jobs = c.get("/api/jobs").json()["jobs"]
@@ -206,7 +206,7 @@ def test_fixed_output_dir(tmp_path):
     assert len(started) == 1
     out = dest / folder.name
     assert (out / "result.json").exists() and (out / "transcript.txt").exists()
-    assert not (folder / "transcripts" / "bloodtranscripts" / "result.json").exists()
+    assert not (folder / "transcripts" / "result.json").exists()
 
 
 def test_fixed_output_inside_watch_rejected(tmp_path):
@@ -445,9 +445,9 @@ def test_merge_parts_into_single_job(tmp_path, monkeypatch):
     _enable_merge(monkeypatch)
     _configure(c, watch, {"parts_mode": "merge"})
     started = _drain(c, settings, transcriber)
-    # Обе части → ОДНА джоба, вывод в корень bloodtranscripts (без «Часть N»).
+    # Обе части → ОДНА джоба, вывод в корень transcripts (без «Часть N»).
     assert len(started) == 1 and started[0]["kind"] == "route_a"
-    out = folder / "transcripts" / "bloodtranscripts"
+    out = folder / "transcripts"
     assert (out / "result.json").exists()
     assert not (out / "Часть 2").exists()
     data = json.loads((out / "result.json").read_text())
@@ -481,7 +481,7 @@ def test_late_part_gets_own_job_in_merge_mode(tmp_path, monkeypatch):
     _add_second_part(folder, participants=(("B", 2),))
     started = _drain(c, settings, transcriber)  # часть 2 доехала позже
     assert len(started) == 1 and started[0]["part"] == 2
-    assert (folder / "transcripts" / "bloodtranscripts" / "Часть 2" / "result.json").exists()
+    assert (folder / "transcripts" / "Часть 2" / "result.json").exists()
 
 
 def test_merge_failure_is_retryable(tmp_path, monkeypatch):
