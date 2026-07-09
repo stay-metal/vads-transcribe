@@ -18,7 +18,7 @@ import {
   Mono,
   Toggle,
 } from "@/components/ui";
-import { IconPlay, IconPause, IconDownload, IconCheck, IconX } from "@/components/icons";
+import { IconPlay, IconPause, IconDownload, IconCheck, IconX, IconBook } from "@/components/icons";
 import { cn, fmtTime, parseRecordingTitle, SPEAKER_COLORS, ACTIVE_STATES, STATUS_META } from "@/lib/utils";
 
 /** provenance → русская метка + тон бейджа. */
@@ -408,11 +408,13 @@ function Viewer({
         ))}
       </Card>
 
-      {/* Плавающая подсказка «Внести в словарь» над выделением (с хвостиком). */}
+      {/* Плавающая кнопка «Внести в словарь» СТРОГО над выделением. Позиционные
+          transform-классы нельзя мешать с animate-* (keyframes затирали translate,
+          и кнопка падала под текст) — сдвиг задаём на обёртке без анимаций. */}
       {sel && !popup && (
         <div
-          className="fixed z-40 -translate-x-1/2 -translate-y-full animate-fade-up"
-          style={{ left: sel.x, top: sel.y - 12 }}
+          className="fixed z-40 -translate-x-1/2 -translate-y-full"
+          style={{ left: sel.x, top: sel.y - 8 }}
         >
           <button
             onMouseDown={(e) => e.preventDefault()}
@@ -420,12 +422,11 @@ function Viewer({
               setPopup(sel.text);
               setSel(null);
             }}
-            className="block whitespace-nowrap rounded-full bg-ink px-3 py-1.5 text-xs font-medium text-white shadow-lift transition-colors hover:bg-ink/90"
+            className="flex items-center gap-1.5 whitespace-nowrap rounded-full bg-coral-500 px-3.5 py-1.5 text-xs font-medium text-white shadow-lift transition-transform duration-150 hover:scale-110 hover:bg-coral-600"
           >
+            <IconBook size={14} />
             Внести в словарь
           </button>
-          {/* хвостик вниз */}
-          <span className="absolute left-1/2 top-full h-0 w-0 -translate-x-1/2 border-x-[6px] border-t-[7px] border-x-transparent border-t-ink" />
         </div>
       )}
       {popup && <GlossaryPopup text={popup} onClose={() => setPopup(null)} />}

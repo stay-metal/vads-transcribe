@@ -91,6 +91,8 @@ export function IconButton({
           )}
         >
           {label}
+          {/* хвостик к элементу */}
+          <span className="absolute left-1/2 top-full h-0 w-0 -translate-x-1/2 border-x-[5px] border-t-[6px] border-x-transparent border-t-ink" />
         </span>
       )}
     </>
