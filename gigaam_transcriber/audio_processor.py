@@ -5,7 +5,6 @@
 - Конвертацию аудио в формат, оптимальный для GigaAM (16kHz, mono, PCM)
 - Извлечение аудио из видео файлов
 - Получение информации о медиафайлах
-- Разбиение аудио по тишине
 """
 
 import json
@@ -15,8 +14,6 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-
-import numpy as np
 
 from .exceptions import (
     AudioProcessingError,
@@ -35,9 +32,10 @@ class AudioProcessor:
     CHANNELS: int = 1  # Mono
     BIT_DEPTH: int = 16
 
-    # Поддерживаемые форматы
-    AUDIO_FORMATS = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".wma", ".opus"}
-    VIDEO_FORMATS = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".wmv", ".flv", ".mpeg", ".mpg"}
+    # Поддерживаемые форматы — единый источник в exceptions.UnsupportedFormatError
+    # (его же импортируют серверные фильтры ingest).
+    AUDIO_FORMATS = UnsupportedFormatError.SUPPORTED_AUDIO
+    VIDEO_FORMATS = UnsupportedFormatError.SUPPORTED_VIDEO
 
     def __init__(self, ffmpeg_path: str | None = None):
         """
@@ -241,19 +239,8 @@ class AudioProcessor:
         self,
         video_path: Path | str,
         output_path: Path | str | None = None,
-        normalize: bool = True,
     ) -> Path:
-        """
-        Извлечение аудио из видео файла.
-
-        Args:
-            video_path: Путь к видео
-            output_path: Путь для сохранения аудио (если None, создаётся временный)
-            normalize: Нормализовать аудио для GigaAM (16kHz, mono)
-
-        Returns:
-            Путь к извлечённому аудио файлу
-        """
+        """Извлечь аудио из видео с нормализацией для GigaAM (16kHz, mono, PCM)."""
         video_path = Path(video_path)
 
         if not self.is_video_file(video_path):
@@ -265,34 +252,20 @@ class AudioProcessor:
             os.close(fd)
         output_path = Path(output_path)
 
-        if normalize:
-            # Извлечение с нормализацией
-            cmd = [
-                self.ffmpeg_path,
-                "-y",
-                "-i",
-                str(video_path),
-                "-vn",  # Без видео
-                "-ar",
-                str(self.SAMPLE_RATE),
-                "-ac",
-                str(self.CHANNELS),
-                "-c:a",
-                "pcm_s16le",
-                str(output_path),
-            ]
-        else:
-            # Просто извлечение
-            cmd = [
-                self.ffmpeg_path,
-                "-y",
-                "-i",
-                str(video_path),
-                "-vn",
-                "-c:a",
-                "pcm_s16le",
-                str(output_path),
-            ]
+        cmd = [
+            self.ffmpeg_path,
+            "-y",
+            "-i",
+            str(video_path),
+            "-vn",  # Без видео
+            "-ar",
+            str(self.SAMPLE_RATE),
+            "-ac",
+            str(self.CHANNELS),
+            "-c:a",
+            "pcm_s16le",
+            str(output_path),
+        ]
 
         try:
             subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -324,7 +297,7 @@ class AudioProcessor:
         input_path = Path(input_path)
 
         if self.is_video_file(input_path):
-            return self.extract_audio_from_video(input_path, output_path, normalize=True)
+            return self.extract_audio_from_video(input_path, output_path)
         elif self.is_audio_file(input_path):
             # Проверяем, нужна ли конвертация
             if input_path.suffix.lower() == ".wav":
@@ -341,104 +314,3 @@ class AudioProcessor:
             return self.normalize(input_path, output_path)
         else:
             raise UnsupportedFormatError(input_path.suffix)
-
-    def split_by_silence(
-        self,
-        audio_path: Path | str,
-        min_silence_len: int = 500,  # мс
-        silence_thresh: int = -40,  # дБ
-        keep_silence: int = 200,  # мс
-    ) -> list[tuple[float, float]]:
-        """
-        Разбиение аудио по паузам (тишине).
-
-        Args:
-            audio_path: Путь к аудио файлу
-            min_silence_len: Минимальная длина тишины для разбиения (мс)
-            silence_thresh: Порог тишины в дБ
-            keep_silence: Сколько тишины оставлять в начале/конце сегментов (мс)
-
-        Returns:
-            Список кортежей (start, end) в секундах
-        """
-        try:
-            from pydub import AudioSegment
-            from pydub.silence import detect_nonsilent
-        except ImportError:
-            logger.warning("pydub не установлен, используем простое разбиение")
-            duration = self.get_duration(audio_path)
-            return [(0, duration)]
-
-        audio = AudioSegment.from_file(str(audio_path))
-
-        # Определение не-тихих сегментов
-        nonsilent_ranges = detect_nonsilent(
-            audio, min_silence_len=min_silence_len, silence_thresh=silence_thresh, seek_step=10
-        )
-
-        if not nonsilent_ranges:
-            return []
-
-        # Конвертация в секунды с добавлением padding
-        segments = []
-        for start_ms, end_ms in nonsilent_ranges:
-            start_sec = max(0, (start_ms - keep_silence)) / 1000.0
-            end_sec = min(len(audio), (end_ms + keep_silence)) / 1000.0
-            segments.append((start_sec, end_sec))
-
-        return segments
-
-    def load_audio_segment(
-        self,
-        audio_path: Path | str,
-        start: float,
-        end: float,
-    ) -> np.ndarray:
-        """
-        Загрузка сегмента аудио.
-
-        Args:
-            audio_path: Путь к аудио файлу
-            start: Начало сегмента (секунды)
-            end: Конец сегмента (секунды)
-
-        Returns:
-            NumPy массив с аудио данными
-        """
-        try:
-            import torchaudio
-        except ImportError:
-            raise AudioProcessingError(
-                "torchaudio не установлен. Установите: pip install torchaudio"
-            )
-
-        waveform, sr = torchaudio.load(str(audio_path))
-
-        # Конвертация в нужный sample rate если необходимо
-        if sr != self.SAMPLE_RATE:
-            resampler = torchaudio.transforms.Resample(sr, self.SAMPLE_RATE)
-            waveform = resampler(waveform)
-
-        # Конвертация в mono
-        if waveform.shape[0] > 1:
-            waveform = waveform.mean(dim=0, keepdim=True)
-
-        # Извлечение сегмента
-        start_sample = int(start * self.SAMPLE_RATE)
-        end_sample = int(end * self.SAMPLE_RATE)
-
-        segment = waveform[0, start_sample:end_sample]
-
-        return segment.numpy()
-
-
-# Глобальный экземпляр для удобства
-_processor: AudioProcessor | None = None
-
-
-def get_audio_processor() -> AudioProcessor:
-    """Получить глобальный экземпляр AudioProcessor."""
-    global _processor
-    if _processor is None:
-        _processor = AudioProcessor()
-    return _processor

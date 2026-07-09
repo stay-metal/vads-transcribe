@@ -2,15 +2,14 @@
 
 Плоский ``transcript.v1.jsonl``: по записи на сегмент
 ``{id, meeting, speaker, start, end, text, confidence, speaker_confidence, provenance, flags}``
-+ sidecar ``.sha256`` (целостность). ``.md`` есть чистая функция от L0
-(:func:`render_md_from_l0`) — пере-сборка без повторного ASR.
++ sidecar ``.sha256`` (целостность) — машинный субстрат для downstream (RAG и пр.).
 
 В custom L0 строится из ``manifest.json`` (чанки нескольких дорожек/коллов Route A/B);
 в DialogScribe источник — ``TranscriptionResult.segments`` (один аудиопоток), поэтому id
 проще: ``<meeting>:<start.3f>:<speaker>:<ordinal>`` (без call_index/time_offset).
 
 I1 (verbatim): текст переносится дословно (``str(...)`` без нормализации). Чистое ядро
-(`build_l0`/`l0_sha256`/`render_md_from_l0`) — без I/O; единственный сайд-эффект — `write_l0`.
+(`build_l0`/`l0_sha256`) — без I/O; единственный сайд-эффект — `write_l0`.
 """
 
 from __future__ import annotations
@@ -97,27 +96,6 @@ def _canonical_json(records: list[dict[str, Any]]) -> str:
 def l0_sha256(records: list[dict[str, Any]]) -> str:
     """sha256 (hex) над канонизированным JSON L0 — детерминированный отпечаток целостности."""
     return hashlib.sha256(_canonical_json(records).encode("utf-8")).hexdigest()
-
-
-def _format_time(seconds: float) -> str:
-    whole = int(max(0.0, float(seconds)))
-    return f"{whole // 3600:02}:{(whole % 3600) // 60:02}:{whole % 60:02}"
-
-
-def render_md_from_l0(records: list[dict[str, Any]], meta: dict | None = None) -> str:
-    """Собрать тело транскрипта из L0 («.md — чистая функция от L0»). Текст дословно (I1)."""
-    lines: list[str] = []
-    title = (meta or {}).get("title")
-    if title:
-        lines += [f"# {title}", ""]
-    for rec in records:
-        prefix = f"[{_format_time(rec['start'])} - {_format_time(rec['end'])}]"
-        speaker = rec.get("speaker")
-        if speaker:
-            lines.append(f"{prefix} **{speaker}:** {rec['text']}")
-        else:
-            lines.append(f"{prefix} {rec['text']}")
-    return "\n".join(lines).rstrip() + "\n"
 
 
 def write_l0(records: list[dict[str, Any]], out_path: Path | str) -> Path:

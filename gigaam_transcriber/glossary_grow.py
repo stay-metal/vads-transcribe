@@ -18,14 +18,14 @@ import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from ._paths import config_dir
+from ._paths import cache_dir
 from .glossary import lint, load_en_words, load_ru_words
 
 
-# Лог корректировок L2 (для последующего harvest). gitignored (.cache/). Резолвится
-# в момент вызова (config_dir() лениво читает GIGAAM_TRANSCRIBER_CONFIG) — не на import-time.
+# Лог корректировок L2 (для последующего harvest). Резолвится в момент вызова
+# (cache_dir() лениво читает GIGAAM_TRANSCRIBER_CACHE) — не на import-time.
 def _corrections_log() -> Path:
-    return config_dir().parent / ".cache" / "corrections.jsonl"
+    return cache_dir() / "corrections.jsonl"
 
 
 _LATIN = re.compile(r"[A-Za-z]")

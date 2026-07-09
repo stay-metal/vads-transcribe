@@ -27,8 +27,6 @@ logger = logging.getLogger("dialogscribe.jobs")
 
 # Карта классов исключений библиотеки → (error_code, безопасное сообщение).
 _ERROR_MAP = {
-    "AudioTooShortError": ("audio_too_short", "Аудио слишком короткое"),
-    "AudioTooLongError": ("audio_too_long", "Аудио длиннее лимита"),
     "UnsupportedFormatError": ("unsupported_format", "Неподдерживаемый формат"),
     "EmptyAudioError": ("empty_audio", "Речь не обнаружена"),
     "EmptyFileError": ("empty_file", "Пустой файл"),
@@ -45,20 +43,12 @@ def classify_error(exc: Exception) -> tuple[str, str]:
 
 
 def _stage_callback(settings: Settings, job_id: str):
-    """progress_callback(current,total,name) → stage_pct в диапазоне ASR 45..85."""
+    """progress_callback → stage_pct в диапазоне ASR 45..85.
 
-    def cb(current: int, total: int, name: str) -> None:
-        frac = (current / total) if total else 0.0
-        pct = 45 + int(frac * 40)
-        update_job_progress(settings.db_path, job_id, "asr", min(pct, 85))
+    Один колбэк на оба пути: route_a зовёт (current, total, name),
+    single — (current, total) per-VAD-сегмент; имя не используется."""
 
-    return cb
-
-
-def _single_stage_callback(settings: Settings, job_id: str):
-    """progress_callback(current,total) для single — per-VAD-сегмент → ASR 45..85."""
-
-    def cb(current: int, total: int) -> None:
+    def cb(current: int, total: int, *_name: str) -> None:
         frac = (current / total) if total else 0.0
         update_job_progress(settings.db_path, job_id, "asr", min(45 + int(frac * 40), 85))
 
@@ -116,7 +106,7 @@ def process_job(settings: Settings, job_id: str, transcriber) -> None:
                 voiceprint_gallery=params.get("voiceprint_gallery"),
                 resume=True,
                 manifest_path=job["manifest_path"],
-                progress_callback=_single_stage_callback(settings, job_id),
+                progress_callback=_stage_callback(settings, job_id),
             )
 
         update_job_progress(db, job_id, "formatting", 95)

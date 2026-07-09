@@ -16,7 +16,6 @@ from gigaam_transcriber import (
     TranscriptionResult,
     TranscriptionSegment,
     UnsupportedFormatError,
-    create_transcriber,
 )
 
 
@@ -63,11 +62,13 @@ class TestGigaAMTranscriberInit:
 
         assert transcriber.hf_token == "explicit_token"
 
-    def test_cache_dir_default(self):
-        """Тест директории кэша по умолчанию."""
+    def test_cache_dir_default(self, monkeypatch, tmp_path):
+        """Дефолтный кэш — в $HOME; тест не сорит в реальный дом (HOME → tmp)."""
+        monkeypatch.setenv("HOME", str(tmp_path))
         transcriber = GigaAMTranscriber()
 
         assert transcriber.cache_dir.exists()
+        assert str(transcriber.cache_dir).startswith(str(tmp_path))
         assert "gigaam_transcriber" in str(transcriber.cache_dir)
 
     def test_cache_dir_custom(self, temp_dir):
@@ -134,29 +135,6 @@ class TestGigaAMTranscriberValidation:
             transcriber._validate_input(Path("/nonexistent/file.wav"))
 
 
-class TestCreateTranscriberFunction:
-    """Тесты для функции create_transcriber."""
-
-    def test_create_default(self):
-        """Тест создания с параметрами по умолчанию."""
-        transcriber = create_transcriber()
-
-        assert isinstance(transcriber, GigaAMTranscriber)
-        assert transcriber.model_name == "v3_e2e_rnnt"
-
-    def test_create_with_params(self):
-        """Тест создания с параметрами."""
-        transcriber = create_transcriber(
-            model_name="v3_e2e_ctc",
-            device="cpu",
-            hf_token="test",
-        )
-
-        assert transcriber.model_name == "v3_e2e_ctc"
-        assert transcriber.device == "cpu"
-        assert transcriber.hf_token == "test"
-
-
 @pytest.mark.requires_model
 class TestGigaAMTranscriberWithModel:
     """
@@ -186,65 +164,6 @@ class TestGigaAMTranscriberWithModel:
         assert transcriber._model is not None
 
         transcriber.cleanup()
-
-
-class TestGigaAMTranscriberMocked:
-    """Тесты с моками (без реальной модели)."""
-
-    @pytest.fixture
-    def mock_transcriber(self):
-        """Фикстура транскрибера с замоканной моделью."""
-        transcriber = GigaAMTranscriber()
-
-        # Мокаем модель
-        mock_model = MagicMock()
-        mock_model.transcribe.return_value = "Тестовая транскрипция"
-        mock_model.transcribe_longform.return_value = [
-            {"transcription": "Первый сегмент", "boundaries": (0.0, 5.0)},
-            {"transcription": "Второй сегмент", "boundaries": (5.0, 10.0)},
-        ]
-
-        transcriber._model = mock_model
-
-        # Мокаем audio_processor
-        mock_processor = MagicMock()
-        mock_processor.is_audio_file.return_value = True
-        mock_processor.is_video_file.return_value = False
-        mock_processor.is_supported_file.return_value = True
-        mock_processor.get_duration.return_value = 5.0
-        mock_processor.get_media_info.return_value = {
-            "duration": 5.0,
-            "sample_rate": 16000,
-            "channels": 1,
-        }
-
-        transcriber._audio_processor = mock_processor
-
-        return transcriber
-
-    def test_transcribe_short_mocked(self, mock_transcriber, temp_dir):
-        """Тест транскрипции короткого аудио (мок)."""
-        # Создаём фейковый файл
-        audio_file = temp_dir / "test.wav"
-        audio_file.write_bytes(b"fake audio content")
-
-        mock_transcriber._audio_processor.get_duration.return_value = 10.0
-
-        segments = mock_transcriber._transcribe_short(audio_file)
-
-        assert len(segments) == 1
-        assert segments[0].text == "Тестовая транскрипция"
-
-    def test_transcribe_long_mocked(self, mock_transcriber, temp_dir):
-        """Тест транскрипции длинного аудио (мок)."""
-        audio_file = temp_dir / "test.wav"
-        audio_file.write_bytes(b"fake audio content")
-
-        segments = mock_transcriber._transcribe_long(audio_file)
-
-        assert len(segments) == 2
-        assert segments[0].text == "Первый сегмент"
-        assert segments[1].text == "Второй сегмент"
 
 
 def _fake_result(text: str = "привет") -> TranscriptionResult:

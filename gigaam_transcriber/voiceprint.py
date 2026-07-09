@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 
 from .data_models import TranscriptionResult
+from .utils import load_waveform_16k_mono
 
 ECAPA_SOURCE = "speechbrain/spkrec-ecapa-voxceleb"
 EMBED_DIM = 192
@@ -125,17 +126,6 @@ def _load_embedder():
     return _EMBEDDER
 
 
-def _load_waveform_16k_mono(audio_path) -> np.ndarray:
-    import torchaudio
-
-    wav, sr = torchaudio.load(str(audio_path))
-    if sr != SAMPLE_RATE:
-        wav = torchaudio.transforms.Resample(sr, SAMPLE_RATE)(wav)
-    if wav.shape[0] > 1:
-        wav = wav.mean(dim=0, keepdim=True)
-    return wav[0].numpy().astype(np.float32)
-
-
 def window_vectors(audio, embedder=None) -> list[np.ndarray]:
     """Пер-оконные ECAPA-эмбеддинги (без усреднения). Тихие/короткие окна пропускаются."""
     import torch
@@ -179,7 +169,7 @@ def build_gallery_from_tracks(tracks: dict[str, str], embedder=None) -> dict[str
     emb = embedder if embedder is not None else _load_embedder()
     refs: dict[str, np.ndarray] = {}
     for name, path in tracks.items():
-        wave = _load_waveform_16k_mono(path)
+        wave = load_waveform_16k_mono(path)
         centroid = embed_windows(wave, emb)
         if float(np.linalg.norm(centroid)) > 0:
             refs[name] = centroid
@@ -238,7 +228,7 @@ def name_diarized_speakers(
     labels = [s.speaker for s in result.segments if s.speaker]
     if not labels:
         return 0
-    waveform = _load_waveform_16k_mono(audio_path)
+    waveform = load_waveform_16k_mono(audio_path)
     embedder = _load_embedder()
     by_label: dict[str, list[np.ndarray]] = {}
     for label in dict.fromkeys(labels):  # уникальные, сохраняя порядок

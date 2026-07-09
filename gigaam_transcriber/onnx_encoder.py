@@ -12,12 +12,14 @@ RNN-T декод (``decode_with_confidence``) остаются в torch — по
 
 from __future__ import annotations
 
+import logging
 import os
-import sys
 from pathlib import Path
 
 import numpy as np
 import torch
+
+logger = logging.getLogger(__name__)
 
 _CACHE_DIR = Path(os.path.expanduser("~/.cache/gigaam"))
 
@@ -64,11 +66,7 @@ def load_onnx_encoder(
     try:
         import onnxruntime as rt
     except Exception as exc:  # noqa: BLE001
-        print(
-            f"[onnx-encoder] onnxruntime недоступен ({exc}); torch-энкодер.",
-            file=sys.stderr,
-            flush=True,
-        )
+        logger.warning("onnxruntime недоступен (%r); откат на torch-энкодер.", exc)
         return None
     try:
         cdir = Path(cache_dir) if cache_dir else _CACHE_DIR
@@ -79,7 +77,7 @@ def load_onnx_encoder(
         # будет вечно падать на загрузке усечённого .onnx (bare exists() этого не ловит).
         marker = cdir / f".{model_name}_encoder.done"
         if not marker.exists():
-            print(f"[onnx-encoder] экспорт {onnx_path} (один раз)...", file=sys.stderr, flush=True)
+            logger.info("Экспорт ONNX-энкодера в %s (один раз)...", onnx_path)
             model.to_onnx(str(cdir), dtype=torch.float32)
             marker.write_text("ok")  # пишется ТОЛЬКО после успешного экспорта
         opts = rt.SessionOptions()
@@ -93,12 +91,8 @@ def load_onnx_encoder(
         in_names = [i.name for i in sess.get_inputs()]
         out_names = [o.name for o in sess.get_outputs()]
         np_dtype = np.float16 if "float16" in sess.get_inputs()[0].type else np.float32
-        print(f"[onnx-encoder] активен ({onnx_path.name}).", file=sys.stderr, flush=True)
+        logger.info("ONNX-энкодер активен (%s).", onnx_path.name)
         return OnnxEncoder(sess, in_names, out_names, np_dtype)
     except Exception as exc:  # noqa: BLE001
-        print(
-            f"[onnx-encoder] не удалось подготовить ({exc}); torch-энкодер.",
-            file=sys.stderr,
-            flush=True,
-        )
+        logger.warning("ONNX-энкодер не подготовлен (%r); откат на torch-энкодер.", exc)
         return None

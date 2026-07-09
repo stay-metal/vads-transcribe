@@ -1,4 +1,4 @@
-"""Расположение редактируемых конфигов (config/) — для глоссария и словарей lint."""
+"""Расположение конфигов (config/) и пользовательского кэша библиотеки."""
 
 from __future__ import annotations
 
@@ -16,3 +16,16 @@ def config_dir() -> Path:
     if env:
         return Path(env).expanduser()
     return Path(__file__).resolve().parents[1] / "config"
+
+
+def cache_dir() -> Path:
+    """Пользовательский кэш (whisper L2, лог L2-правок); $GIGAAM_TRANSCRIBER_CACHE переопределяет.
+
+    Не внутри пакета: при pip-установке site-packages может быть read-only,
+    и mkdir рядом с кодом ронял бы весь L2-проход."""
+    env = os.environ.get("GIGAAM_TRANSCRIBER_CACHE")
+    if env:
+        return Path(env).expanduser()
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    base = Path(xdg).expanduser() if xdg else Path.home() / ".cache"
+    return base / "dialogscribe"

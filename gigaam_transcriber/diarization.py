@@ -17,10 +17,6 @@ from .speaker_mapping import assign_speakers_by_overlap
 
 logger = logging.getLogger(__name__)
 
-# Кэш для загруженных моделей
-_diarization_pipeline = None
-_embedding_model = None
-
 
 class DiarizationManager:
     """Менеджер диаризации спикеров."""
@@ -35,17 +31,6 @@ class DiarizationManager:
         segmentation_batch_size: int | None = None,
         embedding_backend: str = "torch",
     ):
-        """
-        Инициализация менеджера диаризации.
-
-        Args:
-            hf_token: HuggingFace токен для доступа к pyannote моделям
-            device: Устройство ("auto", "cuda", "cpu", "mps")
-            min_speakers: Минимальное количество спикеров
-            max_speakers: Максимальное количество спикеров
-            embedding_batch_size: Размер батча извлечения эмбеддингов (по умолч. 32)
-            segmentation_batch_size: Размер батча сегментации (по умолч. 32)
-        """
         self.hf_token = hf_token or os.getenv("HF_TOKEN")
         self.device = self._resolve_device(device)
         self.min_speakers = min_speakers
@@ -97,85 +82,37 @@ class DiarizationManager:
         except Exception as e:
             logger.debug(f"Не удалось установить токен через huggingface_hub: {e}")
 
-        # Модель диаризации (устаревший fallback убран — он только маскировал
-        # реальную причину 403 по основной модели)
-        models_to_try = [
-            "pyannote/speaker-diarization-3.1",
-        ]
-
-        last_error = None
-
-        for model_id in models_to_try:
-            try:
-                logger.info(f"Попытка загрузки модели: {model_id}")
-                # В новых версиях pyannote.audio используется 'token' вместо 'use_auth_token'
-                try:
-                    pipeline = Pipeline.from_pretrained(model_id, token=self.hf_token)
-                    logger.info(f"Модель {model_id} загружена успешно")
-                    break
-                except TypeError:
-                    # Fallback для старых версий
-                    pipeline = Pipeline.from_pretrained(model_id, use_auth_token=self.hf_token)
-                    logger.info(f"Модель {model_id} загружена успешно")
-                    break
-            except Exception as e:
-                last_error = e
-                error_str = str(e)
-
-                # Проверяем на ошибку доступа
-                if (
-                    "403" in error_str
-                    or "gated" in error_str.lower()
-                    or "authorized" in error_str.lower()
-                ):
-                    logger.warning(
-                        f"Нет доступа к модели {model_id}. "
-                        f"Необходимо принять условия использования на HuggingFace:\n"
-                        f"1. Перейдите на https://huggingface.co/{model_id}\n"
-                        f"2. Нажмите 'Agree and access repository'\n"
-                        f"3. Также примите условия для pyannote/segmentation-3.0\n"
-                        f"4. Убедитесь, что токен имеет права 'read'"
-                    )
-                    continue
-                else:
-                    logger.warning(f"Ошибка при загрузке {model_id}: {e}")
-                    continue
-        else:
-            # Если все попытки не удались
-            if last_error:
-                error_str = str(last_error)
-                if "403" in error_str or "gated" in error_str.lower():
-                    raise DiarizationError(
-                        "Нет доступа к моделям диаризации. "
-                        "Примите условия использования на HuggingFace:\n"
-                        "- https://huggingface.co/pyannote/speaker-diarization-3.1\n"
-                        "- https://huggingface.co/pyannote/segmentation-3.0\n"
-                        "- https://huggingface.co/pyannote/speaker-diarization\n"
-                        "\nПосле принятия условий повторите попытку.",
-                        cause=last_error,
-                    )
-                else:
-                    raise DiarizationError(
-                        "Не удалось загрузить модель диаризации", cause=last_error
-                    )
-            else:
-                raise DiarizationError("Не удалось загрузить модель диаризации")
+        # Пайплайн диаризации держим на 3.1 явно (правило проекта); fallback на
+        # устаревшую модель убран — он только маскировал реальную причину 403.
+        model_id = "pyannote/speaker-diarization-3.1"
+        try:
+            pipeline = Pipeline.from_pretrained(model_id, token=self.hf_token)
+        except Exception as e:
+            error_str = str(e)
+            if (
+                "403" in error_str
+                or "gated" in error_str.lower()
+                or "authorized" in error_str.lower()
+            ):
+                raise DiarizationError(
+                    "Нет доступа к моделям диаризации. "
+                    "Примите условия использования на HuggingFace:\n"
+                    f"- https://huggingface.co/{model_id}\n"
+                    "- https://huggingface.co/pyannote/segmentation-3.0\n"
+                    "и убедитесь, что токен имеет права 'read'.",
+                    cause=e,
+                )
+            raise DiarizationError("Не удалось загрузить модель диаризации", cause=e)
+        logger.info(f"Модель {model_id} загружена")
 
         # Перемещение на устройство
-        device = torch.device(self.device)
-        pipeline = pipeline.to(device)
+        pipeline = pipeline.to(torch.device(self.device))
 
         # Настройка размеров батчей (узкое место на CPU — извлечение эмбеддингов)
         if self.embedding_batch_size:
-            try:
-                pipeline.embedding_batch_size = self.embedding_batch_size
-            except Exception as e:
-                logger.debug(f"Не удалось задать embedding_batch_size: {e}")
+            pipeline.embedding_batch_size = self.embedding_batch_size
         if self.segmentation_batch_size:
-            try:
-                pipeline.segmentation_batch_size = self.segmentation_batch_size
-            except Exception as e:
-                logger.debug(f"Не удалось задать segmentation_batch_size: {e}")
+            pipeline.segmentation_batch_size = self.segmentation_batch_size
 
         # Подмена эмбеддера на ONNX (узкое место диаризации). Сегментация остаётся torch
         # (у неё нет ONNX-пути). ONNX Runtime работает на CPU.
@@ -322,24 +259,13 @@ class HybridDiarization:
 
     def __init__(
         self,
-        hf_token: str | None = None,
-        device: str = "auto",
+        hf_token: str | None = None,  # не используется (speechbrain без токена); в сигнатуре
+        device: str = "auto",  # для симметрии с DiarizationManager (transcriber передаёт оба)
         num_clusters: int | None = None,
     ):
-        """
-        Инициализация гибридной диаризации.
-
-        Args:
-            hf_token: HuggingFace токен
-            device: Устройство
-            num_clusters: Ожидаемое количество спикеров
-        """
-        self.hf_token = hf_token or os.getenv("HF_TOKEN")
         self.device = device
         self.num_clusters = num_clusters
-
         self._embedding_model = None
-        self._vad_model = None
 
     def _get_embedding_model(self):
         """Загрузка модели эмбеддингов спикера."""
@@ -434,20 +360,3 @@ class HybridDiarization:
             result.append(SpeakerSegment(start=start, end=end, speaker=f"Спикер №{label + 1}"))
 
         return result
-
-
-def get_diarization_manager(
-    hf_token: str | None = None, device: str = "auto", **kwargs
-) -> DiarizationManager:
-    """
-    Получить менеджер диаризации.
-
-    Args:
-        hf_token: HuggingFace токен
-        device: Устройство
-        **kwargs: Дополнительные параметры
-
-    Returns:
-        Экземпляр DiarizationManager
-    """
-    return DiarizationManager(hf_token=hf_token, device=device, **kwargs)

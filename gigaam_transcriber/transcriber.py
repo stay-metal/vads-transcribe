@@ -10,14 +10,11 @@
 import logging
 import os
 import sys
-import tempfile
 import time
 import warnings
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-
-import numpy as np
 
 from .audio_processor import AudioProcessor
 from .data_models import (
@@ -36,7 +33,6 @@ from .exceptions import (
     ModelLoadError,
     UnsupportedFormatError,
 )
-from .formatters import save_result
 from .segment_merger import MergeConfig, SegmentMerger
 
 logger = logging.getLogger(__name__)
@@ -322,7 +318,7 @@ class GigaAMTranscriber:
         возвращал бы кэш в память, но не писал output_path/L0 на диск (нарушение контракта)."""
         if not output_path:
             return
-        save_result(result, output_path, output_format)
+        result.save(output_path, output_format)
         logger.info(f"Результат сохранён: {output_path}")
         # L0 evidence-субстрат (opt-in): transcript.v1.jsonl + sha256 рядом с выводом.
         if emit_l0:
@@ -706,7 +702,7 @@ class GigaAMTranscriber:
             except Exception as e:
                 logger.warning(f"Глоссарий пропущен (Route A): {e!r}")
         if output_path:
-            save_result(result, output_path, output_format)
+            result.save(output_path, output_format)
         return result
 
     def _transcribe_audio(
@@ -800,10 +796,7 @@ class GigaAMTranscriber:
         try:
             # Извлечение аудио
             logger.info(f"Извлечение аудио из видео: {video_path}")
-            temp_audio = self.audio_processor.extract_audio_from_video(
-                video_path,
-                normalize=True,
-            )
+            temp_audio = self.audio_processor.extract_audio_from_video(video_path)
 
             # Транскрипция извлечённого аудио
             result = self._transcribe_audio(temp_audio, **kwargs)
@@ -1072,91 +1065,19 @@ class GigaAMTranscriber:
             warnings.warn(f"Ошибка диаризации, продолжаем без неё: {e}", stacklevel=2)
             return segments
 
-    # =========================================================================
-    # Альтернативные методы
-    # =========================================================================
-
-    def audio2text(
-        self,
-        in_audio: str | Path,
-        out_text: str | Path | None = None,
-        diarization: DiarizationMode = "none",
-        **kwargs,
-    ) -> TranscriptionResult:
-        """
-        Транскрибация аудио файла.
-
-        Поддерживает: WAV, FLAC, MP3, OGG, M4A, AAC и любые ffmpeg-совместимые форматы.
-
-        Args:
-            in_audio: Путь к аудио файлу
-            out_text: Путь для сохранения результата
-            diarization: Режим диаризации
-            **kwargs: Дополнительные параметры для transcribe()
-
-        Returns:
-            TranscriptionResult
-        """
-        return self.transcribe(
-            in_audio,
-            output_path=out_text,
-            diarization=diarization,
-            **kwargs,
-        )
-
-    def video2text(
-        self,
-        in_video: str | Path,
-        out_text: str | Path | None = None,
-        diarization: DiarizationMode = "none",
-        keep_temp_audio: bool = False,
-        **kwargs,
-    ) -> TranscriptionResult:
-        """
-        Транскрибация видео файла.
-
-        Извлекает аудио через ffmpeg, затем транскрибирует.
-
-        Args:
-            in_video: Путь к видео файлу
-            out_text: Путь для сохранения результата
-            diarization: Режим диаризации
-            keep_temp_audio: Сохранять временный аудио файл
-            **kwargs: Дополнительные параметры для transcribe()
-
-        Returns:
-            TranscriptionResult
-        """
-        return self.transcribe(
-            in_video,
-            output_path=out_text,
-            diarization=diarization,
-            **kwargs,
-        )
-
     def transcribe_batch(
         self,
         input_paths: list[str | Path],
         output_dir: str | Path | None = None,
         diarization: DiarizationMode = "none",
-        n_workers: int = 1,
         progress_callback: Callable[[int, int, str], None] | None = None,
         **kwargs,
     ) -> list[TranscriptionResult]:
-        """
-        Пакетная обработка нескольких файлов.
+        """Пакетная обработка файлов — последовательно (GPU не параллелится).
 
-        Args:
-            input_paths: Список путей к файлам
-            output_dir: Директория для сохранения результатов
-            diarization: Режим диаризации
-            n_workers: Количество параллельных воркеров
-            progress_callback: Callback для прогресса: (current, total, filename)
-            **kwargs: Дополнительные параметры
-
-        Returns:
-            Список TranscriptionResult
-        """
+        progress_callback(current, total, filename) зовётся после каждого файла;
+        ошибка одного файла не прерывает пакет (в результат кладётся пустой
+        TranscriptionResult с metadata['error'])."""
         results = []
         total = len(input_paths)
 
@@ -1167,10 +1088,6 @@ class GigaAMTranscriber:
         # Последовательная обработка (GPU не параллелится)
         for i, input_path in enumerate(input_paths):
             input_path = Path(input_path)
-
-            if progress_callback:
-                progress_callback(i, total, input_path.name)
-
             logger.info(f"Обработка {i+1}/{total}: {input_path.name}")
 
             # Определение выходного пути (расширение по формату, не хардкод .txt)
@@ -1202,99 +1119,12 @@ class GigaAMTranscriber:
                     )
                 )
 
-        if progress_callback:
-            progress_callback(total, total, "Готово")
+            # После файла (не до): current = число завершённых, как в transcribe_route_a —
+            # единый контракт для прогресс-адаптеров обёрток.
+            if progress_callback:
+                progress_callback(i + 1, total, input_path.name)
 
         return results
-
-    def transcribe_stream(
-        self,
-        audio_iterator: Iterator[np.ndarray],
-        sample_rate: int = 16000,
-        chunk_duration: float = 20.0,
-    ) -> Iterator[TranscriptionSegment]:
-        """
-        Потоковая транскрипция для real-time приложений.
-
-        Args:
-            audio_iterator: Итератор numpy массивов с аудио данными
-            sample_rate: Частота дискретизации
-            chunk_duration: Длительность чанка в секундах
-
-        Yields:
-            TranscriptionSegment для каждого обработанного чанка
-        """
-        import torch
-
-        buffer = []
-        buffer_duration = 0.0
-        current_time = 0.0
-        chunk_samples = int(chunk_duration * sample_rate)
-
-        for chunk in audio_iterator:
-            buffer.append(chunk)
-            buffer_duration += len(chunk) / sample_rate
-
-            # Когда накопилось достаточно данных
-            while buffer_duration >= chunk_duration:
-                # Собираем чанк
-                audio_data = np.concatenate(buffer)
-                process_samples = min(chunk_samples, len(audio_data))
-                process_chunk = audio_data[:process_samples]
-
-                # Сохраняем остаток
-                remaining = audio_data[process_samples:]
-                buffer = [remaining] if len(remaining) > 0 else []
-                buffer_duration = len(remaining) / sample_rate
-
-                # Транскрибируем
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                    temp_path = Path(f.name)
-
-                try:
-                    import torchaudio
-
-                    waveform = torch.from_numpy(process_chunk).unsqueeze(0).float()
-                    torchaudio.save(str(temp_path), waveform, sample_rate)
-
-                    text = self.model.transcribe(str(temp_path))
-
-                    if text and text.strip():
-                        segment_duration = len(process_chunk) / sample_rate
-                        yield TranscriptionSegment(
-                            text=text.strip(),
-                            start=current_time,
-                            end=current_time + segment_duration,
-                        )
-                        current_time += segment_duration
-                finally:
-                    if temp_path.exists():
-                        temp_path.unlink()
-
-        # Обработка остатка
-        if buffer and buffer_duration > 0.5:  # Минимум 0.5 сек
-            audio_data = np.concatenate(buffer)
-
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                temp_path = Path(f.name)
-
-            try:
-                import torchaudio
-
-                waveform = torch.from_numpy(audio_data).unsqueeze(0).float()
-                torchaudio.save(str(temp_path), waveform, sample_rate)
-
-                text = self.model.transcribe(str(temp_path))
-
-                if text and text.strip():
-                    yield TranscriptionSegment(
-                        text=text.strip(),
-                        start=current_time,
-                        end=current_time + buffer_duration,
-                    )
-            finally:
-                if temp_path.exists():
-                    temp_path.unlink()
 
     # =========================================================================
     # Вспомогательные методы
@@ -1318,31 +1148,3 @@ class GigaAMTranscriber:
         self._intended_device = self.device
         _ = self.model
         logger.info("Модель предзагружена")
-
-
-def create_transcriber(
-    model_name: str = "v3_e2e_rnnt",
-    device: str = "auto",
-    hf_token: str | None = None,
-    **kwargs,
-) -> GigaAMTranscriber:
-    """
-    Создание транскрибера с заданными параметрами.
-
-    Это фабричная функция для удобного создания GigaAMTranscriber.
-
-    Args:
-        model_name: Имя модели
-        device: Устройство
-        hf_token: HuggingFace токен
-        **kwargs: Дополнительные параметры
-
-    Returns:
-        Настроенный GigaAMTranscriber
-    """
-    return GigaAMTranscriber(
-        model_name=model_name,
-        device=device,
-        hf_token=hf_token,
-        **kwargs,
-    )

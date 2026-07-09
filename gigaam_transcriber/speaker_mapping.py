@@ -16,10 +16,6 @@ ASR+diarization tutorial): основной критерий атрибуции 
 
 from .data_models import SpeakerSegment, TranscriptionSegment
 
-# Порог «слабой» атрибуции спикера: ниже него метка считается неуверенной
-# (precision-first сигнал; зеркалит DIAR_WEAK_CONFIDENCE из custom).
-DIAR_WEAK_CONFIDENCE = 0.5
-
 
 def assign_speakers_by_overlap(
     transcription_segments: list[TranscriptionSegment],
@@ -74,11 +70,3 @@ def assign_speakers_by_overlap(
             seg.speaker_confidence = 0.0
 
     return transcription_segments
-
-
-def is_weak_speaker(
-    seg: TranscriptionSegment,
-    threshold: float = DIAR_WEAK_CONFIDENCE,
-) -> bool:
-    """Слабая ли атрибуция спикера (для опционального маркера '?')."""
-    return seg.speaker_confidence is not None and seg.speaker_confidence < threshold
