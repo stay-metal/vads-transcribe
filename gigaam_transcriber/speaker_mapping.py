@@ -8,7 +8,7 @@
 и согласовано с best practice (WhisperX ``assign_word_speakers``, pyannoteAI
 ASR+diarization tutorial): основной критерий атрибуции — МАКСИМАЛЬНАЯ СУММАРНАЯ
 доля пересечения интервала реплики с turn'ами спикера, а не спикер в середине
-сегмента (midpoint). Прежний midpoint-first в DialogScribe был субоптимален:
+сегмента (midpoint). Прежний midpoint-first в BloodTranscripts был субоптимален:
 если середина длинного сегмента попадала в короткую вставку соседа, весь сегмент
 уходил не тому спикеру, и overlap-ветка (срабатывавшая только при ``speaker is None``)
 этого не исправляла.

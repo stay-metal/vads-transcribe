@@ -28,4 +28,4 @@ def cache_dir() -> Path:
         return Path(env).expanduser()
     xdg = os.environ.get("XDG_CACHE_HOME")
     base = Path(xdg).expanduser() if xdg else Path.home() / ".cache"
-    return base / "dialogscribe"
+    return base / "bloodtranscripts"

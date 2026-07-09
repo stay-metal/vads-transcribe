@@ -135,7 +135,7 @@ def test_poll_transcribes_into_meeting_subfolder(tmp_path):
     started = poll_local_source(settings, enqueue)
     assert len(started) == 1 and started[0]["kind"] == "route_a"
 
-    out = folder / "transcripts" / "dialogscribe"
+    out = folder / "transcripts" / "bloodtranscripts"
     assert (out / "result.json").exists()
     for fmt in ("txt", "srt", "vtt"):
         assert (out / f"transcript.{fmt}").exists(), fmt
@@ -245,7 +245,7 @@ def test_symlinked_dirs_are_skipped(tmp_path):
 
 
 def test_part_layout_is_stable_regardless_of_part_count(tmp_path):
-    # Часть 1 — всегда корень dialogscribe/, часть N≥2 — всегда подпапка:
+    # Часть 1 — всегда корень bloodtranscripts/, часть N≥2 — всегда подпапка:
     # появление части 2 после ингеста части 1 не сдвигает её вывод.
     from gigaam_transcriber.server.local_watch import _base_output_dir
     from gigaam_transcriber.server.zoom_scan import DEFAULT_PROFILE
@@ -274,7 +274,7 @@ def test_local_watch_root_allowlist(tmp_path, monkeypatch):
     allowed.mkdir(parents=True)
     outside = tmp_path / "outside"
     outside.mkdir()
-    monkeypatch.setenv("DIALOGSCRIBE_LOCAL_WATCH_ROOT", str(tmp_path / "allowed"))
+    monkeypatch.setenv("BLOODTRANSCRIPTS_LOCAL_WATCH_ROOT", str(tmp_path / "allowed"))
     assert validate_watch_dir(settings, str(allowed)) is None
     assert validate_watch_dir(settings, str(outside)) is not None
 
@@ -388,7 +388,7 @@ def test_scan_endpoint_skips_folder_still_being_written(tmp_path, monkeypatch):
 # Прескан: готовые транскрибации импортируются как done без транскрипции
 # --------------------------------------------------------------------------- #
 def _existing_result_json(folder: Path, duration: float = 42.5) -> Path:
-    out = folder / "transcripts" / "dialogscribe"
+    out = folder / "transcripts" / "bloodtranscripts"
     out.mkdir(parents=True)
     payload = {
         "full_text": "готовый транскрипт",
@@ -449,3 +449,32 @@ def test_scan_with_broken_result_json_falls_back_to_transcription(tmp_path, monk
     assert len(started) == 1 and started[0]["kind"] != "imported"
     job = c.get(f"/api/jobs/{started[0]['job_id']}").json()
     assert job["state"] == "done"  # sync-enqueue: FakeTranscriber отработал
+
+
+def test_scan_imports_legacy_dialogscribe_output(tmp_path, monkeypatch):
+    """Архив, транскрибированный до ребрендинга (transcripts/dialogscribe),
+    импортируется прескан-фолбэком."""
+    import gigaam_transcriber.server.local_watch as lw
+
+    c, settings, transcriber = _make(tmp_path)
+    monkeypatch.setattr(lw, "HTTP_SCAN_QUIESCENCE_SEC", 0.0)
+    watch = tmp_path / "zoom"
+    folder = make_zoom_folder(watch)
+    legacy = folder / "transcripts" / "dialogscribe"
+    legacy.mkdir(parents=True)
+    (legacy / "result.json").write_text(
+        json.dumps(
+            {
+                "full_text": "легаси транскрипт",
+                "metadata": {"duration": 10.0},
+                "segments": [{"start": 0.0, "end": 1.0, "text": "легаси транскрипт"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _configure_local(c, watch, enabled=False)
+    started = c.post("/api/ingest/local/scan").json()["started"]
+    assert len(started) == 1 and started[0]["kind"] == "imported"
+    res = c.get(f"/api/jobs/{started[0]['job_id']}/result").json()
+    assert res["segments"][0]["text"] == "легаси транскрипт"

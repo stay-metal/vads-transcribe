@@ -12,7 +12,7 @@ import re
 import shutil
 from pathlib import Path
 
-logger = logging.getLogger("dialogscribe.jobs")
+logger = logging.getLogger("bloodtranscripts.jobs")
 
 _SAFE_GALLERY_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 

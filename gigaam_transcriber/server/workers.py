@@ -59,7 +59,7 @@ def _default_transcriber_factory(settings: Settings):
     from gigaam_transcriber import GigaAMTranscriber
 
     return GigaAMTranscriber(
-        device=os.getenv("DIALOGSCRIBE_DEVICE", "auto"),
+        device=os.getenv("BLOODTRANSCRIPTS_DEVICE", "auto"),
         hf_token=os.getenv("HF_TOKEN"),
     )
 
@@ -68,7 +68,7 @@ def _default_transcriber_factory(settings: Settings):
 # его в файл (env переживает fork process-воркера), atexit-очистка снимает флаг
 # только со СВОИМ токеном — чужой (нового воркера при перекрывающемся рестарте)
 # не трогает. Дефолт "ready" сохраняет поведение вне лаунчера (тесты, ручной warm_up).
-READY_TOKEN_ENV = "DIALOGSCRIBE_READY_TOKEN"
+READY_TOKEN_ENV = "BLOODTRANSCRIPTS_READY_TOKEN"
 
 
 def write_ready_flag(ready_flag_path: Path) -> None:

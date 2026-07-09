@@ -122,7 +122,7 @@ def _oauth_config() -> tuple[str, str, str] | None:
     if not cid or not secret:
         return None
     redirect = os.getenv(
-        "DIALOGSCRIBE_OAUTH_REDIRECT", "http://localhost:8000/api/yandex/oauth/callback"
+        "BLOODTRANSCRIPTS_OAUTH_REDIRECT", "http://localhost:8000/api/yandex/oauth/callback"
     )
     return cid, secret, redirect
 
@@ -343,7 +343,7 @@ def oauth_callback(request: Request, code: str = "", state: str = "", error: str
 
 @router.get("/api/yandex/browse")
 def browse(request: Request, path: str = "/", user: str = Depends(require_session)) -> dict:
-    watch_dir = os.getenv("DIALOGSCRIBE_YANDEX_WATCH_DIR", "/")
+    watch_dir = os.getenv("BLOODTRANSCRIPTS_YANDEX_WATCH_DIR", "/")
     if not under_watch_dir(path, watch_dir):
         raise HTTPException(403, "Путь вне разрешённой папки")
     client = _require_client(request)
@@ -410,7 +410,7 @@ def ingest_path(settings, client, path: str, enqueue_io, *, allow_reclaim: bool 
 @router.post("/api/yandex/pull")
 def pull(payload: PullIn, request: Request, user: str = Depends(require_session)) -> dict:
     settings = request.app.state.settings
-    watch_dir = os.getenv("DIALOGSCRIBE_YANDEX_WATCH_DIR", "/")
+    watch_dir = os.getenv("BLOODTRANSCRIPTS_YANDEX_WATCH_DIR", "/")
     if not under_watch_dir(payload.path, watch_dir):
         raise HTTPException(403, "Путь вне разрешённой папки")
     client = _require_client(request)

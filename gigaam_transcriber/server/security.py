@@ -15,11 +15,11 @@ import hmac
 import bcrypt
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
-_SESSION_SALT = "dialogscribe.session.v1"
+_SESSION_SALT = "bloodtranscripts.session.v1"
 
 
 def hash_password(plain: str) -> str:
-    """Сгенерировать bcrypt-хэш (для подготовки DIALOGSCRIBE_PASSWORD_HASH)."""
+    """Сгенерировать bcrypt-хэш (для подготовки BLOODTRANSCRIPTS_PASSWORD_HASH)."""
     return bcrypt.hashpw(plain.encode("utf-8"), bcrypt.gensalt()).decode("ascii")
 
 

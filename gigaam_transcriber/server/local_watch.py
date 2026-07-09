@@ -4,7 +4,7 @@
 тот же каркас claim/stability/recording/job, но БЕЗ download — дорожки
 остаются в папке встречи. Раскладка источника и место вывода настраиваются
 профилем (`ScanProfile`, пресеты «Zoom»/«Простая папка»/свои): вывод — рядом
-с записью (`<встреча>/transcripts/dialogscribe[/Часть N]`, namespace не
+с записью (`<встреча>/transcripts/bloodtranscripts[/Часть N]`, namespace не
 затирает чужой `transcripts/`) или в отдельную папку.
 
 Дедуп — по `magic_number` встречи (`local:<magic>#p<N>[#t:<имя>]`): устойчив
@@ -45,11 +45,11 @@ from .zoom_scan import (
     scan_meeting,
 )
 
-logger = logging.getLogger("dialogscribe.jobs")
+logger = logging.getLogger("bloodtranscripts.jobs")
 
-# Серверный allowlist локального watch (аналог DIALOGSCRIBE_YANDEX_WATCH_DIR):
+# Серверный allowlist локального watch (аналог BLOODTRANSCRIPTS_YANDEX_WATCH_DIR):
 # "/" — без ограничения (dev); в проде сузить до корня с записями.
-LOCAL_WATCH_ROOT_ENV = "DIALOGSCRIBE_LOCAL_WATCH_ROOT"
+LOCAL_WATCH_ROOT_ENV = "BLOODTRANSCRIPTS_LOCAL_WATCH_ROOT"
 
 
 def profile_from_source(src: dict | None) -> ScanProfile:
@@ -262,11 +262,19 @@ def _import_existing_transcript(
     """Прескан: готовая транскрибация в папке вывода → регистрация как done-джоба.
 
     Паттерн — result.json по раскладке профиля источника (_base_output_dir:
-    transcripts/dialogscribe[/Часть N] или fixed-папка). Найден и читается →
+    transcripts/bloodtranscripts[/Часть N] или fixed-папка). Найден и читается →
     recording + job(state=done) без транскрипции (переустановка/перенос архива
     не пережёвывает GPU уже сделанное). Битый/нечитаемый result.json → None
     (честная транскрипция). Возвращает job_id или None."""
     out_dir = _base_output_dir(meeting, part.index, profile)
+    if not (out_dir / "result.json").exists() and profile.output_mode != "fixed":
+        # Легаси-раскладка до ребрендинга: архивы, транскрибированные прежними
+        # версиями, лежат в transcripts/dialogscribe — импортируем и их.
+        legacy = meeting.folder / "transcripts" / "dialogscribe"
+        if part.index > 1:
+            legacy = legacy / f"Часть {part.index}"
+        if (legacy / "result.json").exists():
+            out_dir = legacy
     result_json = out_dir / "result.json"
     if not result_json.exists():
         return None

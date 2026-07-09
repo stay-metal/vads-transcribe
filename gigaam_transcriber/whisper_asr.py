@@ -1,6 +1,6 @@
 """L2 «второе мнение» — ЛОКАЛЬНЫЙ multilingual Whisper (faster-whisper, CPU/int8). Бесплатно.
 
-Перенос из custom (zoom_transcriber/whisper_asr.py), адаптирован под DialogScribe:
+Перенос из custom (zoom_transcriber/whisper_asr.py), адаптирован под BloodTranscripts:
 вход — numpy-сегмент (а не wav-путь; faster-whisper принимает массив напрямую), убрана
 ветка legacy gemini-кэша. Перечитывает сегмент-кандидат (с латиницей) маленькой
 многоязычной моделью, чтобы fusion.py поправил ровно то, что greedy RNN-T GigaAM путает
@@ -267,7 +267,7 @@ def apply_second_opinion(
         stats["failed"] = failed
     result.metadata["second_opinion"] = stats
     # Самообучение глоссария (#20): копим устойчивые латиница-правки в лог; offline
-    # harvest (dialogscribe glossary harvest) сворачивает частые (count>=3) в
+    # harvest (bloodtranscripts glossary harvest) сворачивает частые (count>=3) в
     # кандидаты-terms под lint (ручная курация).
     if all_corrections:
         try:

@@ -70,7 +70,7 @@ def create_app(settings: Settings | None = None, enqueue=None) -> FastAPI:
     settings = settings or Settings.from_env()
     settings.ensure_dirs()
     init_db(settings.db_path)
-    # §8 auto-bump: смена DIALOGSCRIBE_PASSWORD_HASH инвалидирует старые cookie.
+    # §8 auto-bump: смена BLOODTRANSCRIPTS_PASSWORD_HASH инвалидирует старые cookie.
     if settings.password_hash:
         reconcile_password_epoch(settings.db_path, settings.password_hash)
     # Осиротевшие in-flight джобы → error, но ТОЛЬКО если gpu-воркер не жив (нет
@@ -79,7 +79,7 @@ def create_app(settings: Settings | None = None, enqueue=None) -> FastAPI:
     if not settings.ready_flag_path.exists():
         reconcile_orphaned_jobs(settings.db_path)
 
-    app = FastAPI(title="DialogScribe", docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title="BloodTranscripts", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.settings = settings
     # Постановка джоб в очередь: по умолчанию huey, в тестах подменяется.
     app.state.enqueue = enqueue if enqueue is not None else _default_enqueue

@@ -1,4 +1,4 @@
-# DialogScribe — деплой одной коробкой (спека §11). NVIDIA Container Toolkit.
+# BloodTranscripts — деплой одной коробкой (спека §11). NVIDIA Container Toolkit.
 # Инвариант: GPU держит РОВНО ОДИН процесс (gpu-worker, -k process -w 1).
 # Порты api/worker НЕ публикуются — наружу смотрит только nginx (TLS).
 

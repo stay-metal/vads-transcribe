@@ -233,7 +233,7 @@ def test_pull_dedup_same_revision(tmp_path):
 
 
 def test_pull_outside_watch_dir(tmp_path, monkeypatch):
-    monkeypatch.setenv("DIALOGSCRIBE_YANDEX_WATCH_DIR", "/Записи")
+    monkeypatch.setenv("BLOODTRANSCRIPTS_YANDEX_WATCH_DIR", "/Записи")
     c, _ = _make(tmp_path)
     c.put("/api/yandex/token", json={"token": VALID})
     r = c.post("/api/yandex/pull", json={"path": "/Другое/секрет"})
@@ -481,14 +481,14 @@ def test_downloaded_bad_magic_bytes_fails_without_job(tmp_path):
 
 
 def test_browse_respects_watch_dir(tmp_path, monkeypatch):
-    monkeypatch.setenv("DIALOGSCRIBE_YANDEX_WATCH_DIR", "/Записи")
+    monkeypatch.setenv("BLOODTRANSCRIPTS_YANDEX_WATCH_DIR", "/Записи")
     c, _ = _make(tmp_path)
     c.put("/api/yandex/token", json={"token": VALID})
     assert c.get("/api/yandex/browse", params={"path": "/Другое"}).status_code == 403
 
 
 def test_watch_dir_traversal_normalized(tmp_path, monkeypatch):
-    monkeypatch.setenv("DIALOGSCRIBE_YANDEX_WATCH_DIR", "/Записи")
+    monkeypatch.setenv("BLOODTRANSCRIPTS_YANDEX_WATCH_DIR", "/Записи")
     c, _ = _make(tmp_path)
     c.put("/api/yandex/token", json={"token": VALID})
     # textual prefix-обход блокируется нормализацией

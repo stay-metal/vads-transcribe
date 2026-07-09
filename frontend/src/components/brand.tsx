@@ -48,7 +48,7 @@ export function AtomBadge({ size = 36, className }: { size?: number; className?:
 export function Wordmark({ eyebrow = false }: { eyebrow?: boolean }) {
   return (
     <span className="flex flex-col leading-none">
-      <span className="text-[15px] font-semibold tracking-tightest text-ink">dialogscribe</span>
+      <span className="text-[15px] font-semibold tracking-tightest text-ink">bloodtranscripts</span>
       {eyebrow && (
         <span className="mt-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-ink-muted">
           Понимаю AI

@@ -19,7 +19,7 @@ from huey import crontab
 
 from .queues import make_gpu_huey, make_io_huey
 
-_DATA_DIR = Path(os.getenv("DIALOGSCRIBE_DATA_DIR", str(Path.home() / ".dialogscribe")))
+_DATA_DIR = Path(os.getenv("BLOODTRANSCRIPTS_DATA_DIR", str(Path.home() / ".bloodtranscripts")))
 _DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 gpu_huey = make_gpu_huey(_DATA_DIR)

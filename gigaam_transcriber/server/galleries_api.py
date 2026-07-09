@@ -2,7 +2,7 @@
 
 Создание — тяжёлая ML-операция (ECAPA-эмбеддинги): api лишь принимает образцы
 (стрим на диск, magic-bytes) и ставит сборку на io-очередь; сам ML не грузит.
-Каталог согласован с CLI через `DIALOGSCRIBE_GALLERY_DIR`. Имя — slug (анти-traversal).
+Каталог согласован с CLI через `BLOODTRANSCRIPTS_GALLERY_DIR`. Имя — slug (анти-traversal).
 """
 
 from __future__ import annotations
@@ -25,8 +25,8 @@ _SAFE_GALLERY_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def _gallery_dir() -> Path:
-    """Каталог галерей (env DIALOGSCRIBE_GALLERY_DIR или ~/.cache) — как в CLI."""
-    env = os.getenv("DIALOGSCRIBE_GALLERY_DIR")
+    """Каталог галерей (env BLOODTRANSCRIPTS_GALLERY_DIR или ~/.cache) — как в CLI."""
+    env = os.getenv("BLOODTRANSCRIPTS_GALLERY_DIR")
     base = Path(env) if env else Path.home() / ".cache" / "gigaam_transcriber" / "galleries"
     base.mkdir(parents=True, exist_ok=True)
     return base

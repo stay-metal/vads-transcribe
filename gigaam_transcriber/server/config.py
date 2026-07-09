@@ -46,7 +46,7 @@ class Settings:
     fernet_key: str = ""  # шифрование секретов в БД (Яндекс-токен, M5)
 
     # --- директории/данные ---
-    data_dir: Path = field(default_factory=lambda: Path.home() / ".dialogscribe")
+    data_dir: Path = field(default_factory=lambda: Path.home() / ".bloodtranscripts")
     # Производные от data_dir (вычисляются в __post_init__) — всегда Path, не init-параметры.
     db_path: Path = field(init=False)  # app.sqlite
     ready_flag_path: Path = field(init=False)  # флаг тёплой модели
@@ -75,42 +75,46 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> Settings:
-        data_dir = Path(os.getenv("DIALOGSCRIBE_DATA_DIR", str(Path.home() / ".dialogscribe")))
+        data_dir = Path(
+            os.getenv("BLOODTRANSCRIPTS_DATA_DIR", str(Path.home() / ".bloodtranscripts"))
+        )
         return cls(
-            user=os.getenv("DIALOGSCRIBE_USER", "admin"),
-            password_hash=os.getenv("DIALOGSCRIBE_PASSWORD_HASH", ""),
-            session_key=os.getenv("DIALOGSCRIBE_SESSION_KEY", ""),
-            fernet_key=os.getenv("DIALOGSCRIBE_FERNET_KEY", ""),
+            user=os.getenv("BLOODTRANSCRIPTS_USER", "admin"),
+            password_hash=os.getenv("BLOODTRANSCRIPTS_PASSWORD_HASH", ""),
+            session_key=os.getenv("BLOODTRANSCRIPTS_SESSION_KEY", ""),
+            fernet_key=os.getenv("BLOODTRANSCRIPTS_FERNET_KEY", ""),
             data_dir=data_dir,
-            cookie_secure=_env_bool("DIALOGSCRIBE_COOKIE_SECURE", True),
-            require_https=_env_bool("DIALOGSCRIBE_REQUIRE_HTTPS", True),
-            session_max_age=_env_int("DIALOGSCRIBE_SESSION_MAX_AGE", DEFAULT_SESSION_MAX_AGE),
-            login_max_failures=_env_int("DIALOGSCRIBE_LOGIN_MAX_FAILURES", 10),
-            login_lockout_seconds=_env_int("DIALOGSCRIBE_LOGIN_LOCKOUT_SECONDS", 60),
-            login_global_max_failures=_env_int("DIALOGSCRIBE_LOGIN_GLOBAL_MAX_FAILURES", 50),
-            login_max_lockout_seconds=_env_int("DIALOGSCRIBE_LOGIN_MAX_LOCKOUT_SECONDS", 3600),
-            max_file_size=_env_int("DIALOGSCRIBE_MAX_FILE_SIZE", DEFAULT_MAX_FILE_SIZE),
+            cookie_secure=_env_bool("BLOODTRANSCRIPTS_COOKIE_SECURE", True),
+            require_https=_env_bool("BLOODTRANSCRIPTS_REQUIRE_HTTPS", True),
+            session_max_age=_env_int("BLOODTRANSCRIPTS_SESSION_MAX_AGE", DEFAULT_SESSION_MAX_AGE),
+            login_max_failures=_env_int("BLOODTRANSCRIPTS_LOGIN_MAX_FAILURES", 10),
+            login_lockout_seconds=_env_int("BLOODTRANSCRIPTS_LOGIN_LOCKOUT_SECONDS", 60),
+            login_global_max_failures=_env_int("BLOODTRANSCRIPTS_LOGIN_GLOBAL_MAX_FAILURES", 50),
+            login_max_lockout_seconds=_env_int("BLOODTRANSCRIPTS_LOGIN_MAX_LOCKOUT_SECONDS", 3600),
+            max_file_size=_env_int("BLOODTRANSCRIPTS_MAX_FILE_SIZE", DEFAULT_MAX_FILE_SIZE),
             max_recording_total=_env_int(
-                "DIALOGSCRIBE_MAX_RECORDING_TOTAL", DEFAULT_MAX_RECORDING_TOTAL
+                "BLOODTRANSCRIPTS_MAX_RECORDING_TOTAL", DEFAULT_MAX_RECORDING_TOTAL
             ),
-            max_duration_sec=_env_int("DIALOGSCRIBE_MAX_DURATION_SEC", DEFAULT_MAX_DURATION_SEC),
+            max_duration_sec=_env_int(
+                "BLOODTRANSCRIPTS_MAX_DURATION_SEC", DEFAULT_MAX_DURATION_SEC
+            ),
         )
 
     def validate_for_serve(self) -> list[str]:
         """Список фатальных проблем конфигурации перед реальным запуском (не для тестов)."""
         problems = []
         if not self.password_hash:
-            problems.append("DIALOGSCRIBE_PASSWORD_HASH не задан — вход невозможен.")
+            problems.append("BLOODTRANSCRIPTS_PASSWORD_HASH не задан — вход невозможен.")
         if not self.session_key:
-            problems.append("DIALOGSCRIBE_SESSION_KEY не задан — подпись сессии небезопасна.")
+            problems.append("BLOODTRANSCRIPTS_SESSION_KEY не задан — подпись сессии небезопасна.")
         if not self.fernet_key:
             problems.append(
-                "DIALOGSCRIBE_FERNET_KEY не задан — секреты at-rest шифровались бы "
+                "BLOODTRANSCRIPTS_FERNET_KEY не задан — секреты at-rest шифровались бы "
                 "константным публично-выводимым ключом."
             )
         if self.session_key and self.session_key == self.fernet_key:
             problems.append(
-                "DIALOGSCRIBE_SESSION_KEY и DIALOGSCRIBE_FERNET_KEY должны различаться "
+                "BLOODTRANSCRIPTS_SESSION_KEY и BLOODTRANSCRIPTS_FERNET_KEY должны различаться "
                 "(раздельные ключи: подпись сессии vs шифрование секретов)."
             )
         return problems

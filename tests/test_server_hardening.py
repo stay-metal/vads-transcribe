@@ -79,12 +79,12 @@ def test_password_change_invalidates_existing_cookies(tmp_path):
     c1 = TestClient(create_app(s1))
     c1.post("/api/auth/login", data={"username": "admin", "password": "old-pass"})
     assert c1.get("/api/auth/me").status_code == 200
-    cookie = c1.cookies.get("ds_session")
+    cookie = c1.cookies.get("bt_session")
 
     # Смена пароля (тот же session_key и data_dir) → reconcile бампит epoch.
     s2 = _settings(tmp_path, password_hash=hash_password("new-pass"))
     c2 = TestClient(create_app(s2))
-    c2.cookies.set("ds_session", cookie)
+    c2.cookies.set("bt_session", cookie)
     assert c2.get("/api/auth/me").status_code == 401  # старая cookie мертва
 
 
@@ -93,9 +93,9 @@ def test_unchanged_password_keeps_sessions(tmp_path):
     ph = hash_password(PASSWORD)
     c1 = TestClient(create_app(_settings(tmp_path, password_hash=ph)))
     c1.post("/api/auth/login", data={"username": "admin", "password": PASSWORD})
-    cookie = c1.cookies.get("ds_session")
+    cookie = c1.cookies.get("bt_session")
     c2 = TestClient(create_app(_settings(tmp_path, password_hash=ph)))
-    c2.cookies.set("ds_session", cookie)
+    c2.cookies.set("bt_session", cookie)
     assert c2.get("/api/auth/me").status_code == 200
 
 

@@ -81,7 +81,7 @@ def log_corrections(pairs: list[tuple[str, str]], log_path: Path | None = None) 
 def harvest_log(log_path: Path | None = None, min_count: int = 3) -> dict[str, str]:
     """Прочитать лог корректировок и свернуть в кандидаты-terms (под двухъязычным lint).
 
-    Читает и легаси-лог из прежнего расположения (переезд в ~/.cache/dialogscribe) —
+    Читает и легаси-лог из прежнего расположения (переезд в ~/.cache/bloodtranscripts) —
     накопленные до переезда правки продолжают учитываться в счётчиках повторов.
     Возвращает {мангл: каноника} для ручной курации — НЕ пишет glossary.json (precision-first)."""
     paths = [Path(log_path)] if log_path else [_corrections_log(), _legacy_corrections_log()]

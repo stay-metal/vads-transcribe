@@ -20,7 +20,7 @@ from .config import Settings
 from .db import get_session_epoch
 from .security import issue_session, verify_password, verify_session, verify_user
 
-SESSION_COOKIE = "ds_session"
+SESSION_COOKIE = "bt_session"
 
 router = APIRouter()
 

@@ -1,4 +1,4 @@
-"""DialogScribe web-сервер (milestone M2+).
+"""BloodTranscripts web-сервер (milestone M2+).
 
 Тонкая презентационная оболочка над библиотекой `gigaam_transcriber`:
 FastAPI api (auth/REST/SPA, НЕ держит модель) + Huey 2-очереди (io/gpu) +

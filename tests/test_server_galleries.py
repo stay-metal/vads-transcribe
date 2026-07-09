@@ -10,7 +10,7 @@ from tests.conftest import WAV, login_client, server_settings
 def _client(tmp_path, monkeypatch):
     gdir = tmp_path / "galleries"
     gdir.mkdir()
-    monkeypatch.setenv("DIALOGSCRIBE_GALLERY_DIR", str(gdir))
+    monkeypatch.setenv("BLOODTRANSCRIPTS_GALLERY_DIR", str(gdir))
     app = create_app(server_settings(tmp_path))
     calls: list = []
     app.state.enqueue_gallery = lambda name, tracks: calls.append((name, tracks))
@@ -105,7 +105,7 @@ def test_build_gallery_job_saves_and_cleans(tmp_path, monkeypatch):
 
     from gigaam_transcriber import voiceprint
 
-    monkeypatch.setenv("DIALOGSCRIBE_GALLERY_DIR", str(tmp_path / "g"))
+    monkeypatch.setenv("BLOODTRANSCRIPTS_GALLERY_DIR", str(tmp_path / "g"))
     monkeypatch.setattr(
         voiceprint,
         "build_gallery_from_tracks",

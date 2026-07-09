@@ -65,7 +65,7 @@ def put_source(
     source_type = _source_type_or_400(payload.source_type)
     scan_profile_json: str | None = None
     if source_type == "yandex":
-        watch_dir = os.getenv("DIALOGSCRIBE_YANDEX_WATCH_DIR", "/")
+        watch_dir = os.getenv("BLOODTRANSCRIPTS_YANDEX_WATCH_DIR", "/")
         # Конфигурируемый watch_dir обязан быть под серверным allowlist (анти-обход).
         if not under_watch_dir(payload.watch_dir, watch_dir):
             raise HTTPException(403, "watch_dir вне разрешённой области")

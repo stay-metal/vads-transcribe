@@ -11,7 +11,7 @@ load-bearing (голый `huey_consumer` обойти guard не давал — 
 
 macOS (F6): `-k process` автоматически подменяется на `-k thread` — Metal/MPS
 не инициализируется в форкнутом без exec ребёнке (`MTLCompilerService`
-недоступен), fork-воркер с `DIALOGSCRIBE_DEVICE=mps` уходил в крашлуп
+недоступен), fork-воркер с `BLOODTRANSCRIPTS_DEVICE=mps` уходил в крашлуп
 «Worker 1 died». Единственный поток-воркер в основном процессе сохраняет
 инвариант одного держателя модели, но native-краш убивает весь процесс —
 на macOS гоняй воркер под супервизором (launchd/`while true`). Linux (прод) —
@@ -70,7 +70,7 @@ def _ensure_forkable_start_method() -> None:
 
 def main(argv: list | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
-    parser = argparse.ArgumentParser(prog="dialogscribe-gpu-worker")
+    parser = argparse.ArgumentParser(prog="bloodtranscripts-gpu-worker")
     parser.add_argument("-w", "--workers", type=int, default=1)
     parser.add_argument(
         "-k",

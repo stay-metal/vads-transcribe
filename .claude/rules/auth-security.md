@@ -13,7 +13,7 @@ paths:
 - Сессия — itsdangerous `URLSafeTimedSerializer` (URL-safe ради кириллицы в username); на КАЖДОМ запросе
   сверяй `max_age` и epoch с БД, user сравнивай на bytes.
 - session-epoch бамп гасит все cookie; не убирай `reconcile_password_epoch` — он авто-бампит epoch при
-  смене `DIALOGSCRIBE_PASSWORD_HASH`.
+  смене `BLOODTRANSCRIPTS_PASSWORD_HASH`.
 - Cookie сессии — только `HttpOnly` + `secure=cookie_secure` + `samesite="strict"` + `path="/"`; ничего
   не понижай.
 - РАЗДЕЛЬНЫЕ `session_key` (подпись cookie) и `fernet_key` (шифрование секретов); `validate_for_serve`

@@ -27,7 +27,7 @@ from .repository import (
     update_job_progress,
 )
 
-logger = logging.getLogger("dialogscribe.jobs")
+logger = logging.getLogger("bloodtranscripts.jobs")
 
 
 class JobCanceled(DecodeCancelled):  # noqa: N818 — сигнал отмены, не ошибка
@@ -155,7 +155,7 @@ def process_job(settings: Settings, job_id: str, transcriber) -> None:
         result_json.write_text(result.to_json(), encoding="utf-8")
 
         # Локальный watch-конвейер: транскрипты сразу на диск в папку встречи
-        # (transcripts/dialogscribe) — потребитель читает их без web-UI.
+        # (transcripts/bloodtranscripts) — потребитель читает их без web-UI.
         if job["source"] == "local":
             for fmt, render in (
                 ("md", result.to_md),

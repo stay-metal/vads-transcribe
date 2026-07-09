@@ -1,4 +1,4 @@
-"""Smoke-тесты единого CLI `dialogscribe` (M1).
+"""Smoke-тесты единого CLI `bloodtranscripts` (M1).
 
 Модель не грузится: класс `GigaAMTranscriber` подменяется фейком на CLI-модуле
 (паттерн проекта). Проверяется маппинг флагов CLI → аргументы библиотеки,
@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-import gigaam_transcriber.dialogscribe_cli as dcli
+import gigaam_transcriber.bloodtranscripts_cli as dcli
 from gigaam_transcriber import GigaAMTranscriber
 from gigaam_transcriber.data_models import TranscriptionResult, TranscriptionSegment
 
@@ -109,7 +109,7 @@ def test_group_help_lists_commands(runner):
 def test_version(runner):
     res = runner.invoke(dcli.cli, ["--version"])
     assert res.exit_code == 0
-    assert "dialogscribe" in res.output
+    assert "bloodtranscripts" in res.output
 
 
 @pytest.mark.parametrize("cmd", ["transcribe", "batch", "route-a", "gallery", "serve"])
@@ -363,7 +363,7 @@ def test_route_a_no_tracks(runner, tmp_path):
 # gallery
 # --------------------------------------------------------------------------- #
 def test_gallery_build(runner, tmp_path, monkeypatch):
-    monkeypatch.setenv("DIALOGSCRIBE_GALLERY_DIR", str(tmp_path / "gal"))
+    monkeypatch.setenv("BLOODTRANSCRIPTS_GALLERY_DIR", str(tmp_path / "gal"))
     calls = {}
 
     def fake_build(tracks, embedder=None):
@@ -390,7 +390,7 @@ def test_gallery_build(runner, tmp_path, monkeypatch):
 
 
 def test_gallery_build_bad_track(runner, tmp_path, monkeypatch):
-    monkeypatch.setenv("DIALOGSCRIBE_GALLERY_DIR", str(tmp_path / "gal"))
+    monkeypatch.setenv("BLOODTRANSCRIPTS_GALLERY_DIR", str(tmp_path / "gal"))
     res = runner.invoke(dcli.cli, ["gallery", "build", "team", "--track", "broken"])
     assert res.exit_code == 2
     assert "LABEL=PATH" in res.output
@@ -400,7 +400,7 @@ def test_gallery_list(runner, tmp_path, monkeypatch):
     gal = tmp_path / "gal"
     gal.mkdir()
     (gal / "team.json").write_text("{}")
-    monkeypatch.setenv("DIALOGSCRIBE_GALLERY_DIR", str(gal))
+    monkeypatch.setenv("BLOODTRANSCRIPTS_GALLERY_DIR", str(gal))
     monkeypatch.setattr(
         "gigaam_transcriber.voiceprint.load_gallery",
         lambda p: ({"Алиса": [0.1]}, None, 0.1),
@@ -412,7 +412,7 @@ def test_gallery_list(runner, tmp_path, monkeypatch):
 
 
 def test_gallery_list_empty(runner, tmp_path, monkeypatch):
-    monkeypatch.setenv("DIALOGSCRIBE_GALLERY_DIR", str(tmp_path / "empty"))
+    monkeypatch.setenv("BLOODTRANSCRIPTS_GALLERY_DIR", str(tmp_path / "empty"))
     res = runner.invoke(dcli.cli, ["gallery", "list"])
     assert res.exit_code == 0, res.output
     assert "нет" in res.output.lower()
@@ -422,14 +422,14 @@ def test_gallery_rm(runner, tmp_path, monkeypatch):
     gal = tmp_path / "gal"
     gal.mkdir()
     (gal / "team.json").write_text("{}")
-    monkeypatch.setenv("DIALOGSCRIBE_GALLERY_DIR", str(gal))
+    monkeypatch.setenv("BLOODTRANSCRIPTS_GALLERY_DIR", str(gal))
     res = runner.invoke(dcli.cli, ["gallery", "rm", "team"])
     assert res.exit_code == 0, res.output
     assert not (gal / "team.json").exists()
 
 
 def test_gallery_rm_missing(runner, tmp_path, monkeypatch):
-    monkeypatch.setenv("DIALOGSCRIBE_GALLERY_DIR", str(tmp_path / "gal"))
+    monkeypatch.setenv("BLOODTRANSCRIPTS_GALLERY_DIR", str(tmp_path / "gal"))
     res = runner.invoke(dcli.cli, ["gallery", "rm", "ghost"])
     assert res.exit_code == 2
     assert "не найдена" in res.output
@@ -437,14 +437,14 @@ def test_gallery_rm_missing(runner, tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("bad", ["../evil", "../../etc/passwd", "/abs/path", "a/b", "..", "."])
 def test_gallery_rm_rejects_traversal(runner, tmp_path, monkeypatch, bad):
-    monkeypatch.setenv("DIALOGSCRIBE_GALLERY_DIR", str(tmp_path / "gal"))
+    monkeypatch.setenv("BLOODTRANSCRIPTS_GALLERY_DIR", str(tmp_path / "gal"))
     res = runner.invoke(dcli.cli, ["gallery", "rm", bad])
     assert res.exit_code == 2
     assert "Недопустимое имя" in res.output
 
 
 def test_gallery_build_rejects_traversal(runner, tmp_path, monkeypatch):
-    monkeypatch.setenv("DIALOGSCRIBE_GALLERY_DIR", str(tmp_path / "gal"))
+    monkeypatch.setenv("BLOODTRANSCRIPTS_GALLERY_DIR", str(tmp_path / "gal"))
     res = runner.invoke(dcli.cli, ["gallery", "build", "/tmp/evil", "--track", "A=/x/a.m4a"])
     assert res.exit_code == 2
     assert "Недопустимое имя" in res.output
@@ -455,8 +455,8 @@ def test_gallery_build_rejects_traversal(runner, tmp_path, monkeypatch):
 # --------------------------------------------------------------------------- #
 def test_serve_requires_config(runner, monkeypatch):
     # Без обязательных секретов serve завершается с ошибкой, не поднимая uvicorn.
-    monkeypatch.delenv("DIALOGSCRIBE_PASSWORD_HASH", raising=False)
-    monkeypatch.delenv("DIALOGSCRIBE_SESSION_KEY", raising=False)
+    monkeypatch.delenv("BLOODTRANSCRIPTS_PASSWORD_HASH", raising=False)
+    monkeypatch.delenv("BLOODTRANSCRIPTS_SESSION_KEY", raising=False)
     res = runner.invoke(dcli.cli, ["serve"])
     assert res.exit_code == 1
     assert "переменные окружения" in res.output

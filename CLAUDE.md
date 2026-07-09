@@ -1,6 +1,6 @@
-# DialogScribe — рулы проекта
+# BloodTranscripts — рулы проекта
 
-Микробиблиотека транскрипции (GigaAM ASR + диаризация) `gigaam_transcriber` + чистый CLI `dialogscribe`
+Микробиблиотека транскрипции (GigaAM ASR + диаризация) `gigaam_transcriber` + чистый CLI `bloodtranscripts`
 + web-сервер (FastAPI + Huey + SQLite) + SPA (Vite/React). Истина по пайплайну — **библиотека**;
 CLI и сервер — тонкие обёртки.
 

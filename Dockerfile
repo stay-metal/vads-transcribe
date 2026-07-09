@@ -1,4 +1,4 @@
-# DialogScribe — общий образ api / io-worker / gpu-worker.
+# BloodTranscripts — общий образ api / io-worker / gpu-worker.
 # База CPU-friendly (python-slim); на linux/amd64 pip-колёса torch включают CUDA,
 # поэтому gpu-worker работает из этого же образа при наличии NVIDIA Container Toolkit.
 # После запуска проверьте metadata.device джобы: device_fallback='cpu' у всех джоб
@@ -32,7 +32,7 @@ COPY --from=frontend /fe/dist /app/gigaam_transcriber/server/static
 RUN pip install --no-cache-dir -e ".[server,diarization,second-opinion,onnx]" \
     && if [ -d GigaAM ]; then pip install --no-cache-dir -e ./GigaAM; fi
 
-ENV DIALOGSCRIBE_DATA_DIR=/data
+ENV BLOODTRANSCRIPTS_DATA_DIR=/data
 EXPOSE 8000
 
 # Дефолт — api (uvicorn factory). Воркеры переопределяют command в compose.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dialogscribe — единый CLI поверх библиотеки ``gigaam_transcriber``.
+bloodtranscripts — единый CLI поверх библиотеки ``gigaam_transcriber``.
 
 Тонкая презентационная оболочка: каждая команда зовёт ровно методы библиотеки
 (`transcribe`, `transcribe_batch`, `discover_route_a_tracks`/`transcribe_route_a`,
@@ -9,16 +9,16 @@ voiceprint-галереи). Никакого собственного декод
 
 Контракт потоков: stdout несёт ТОЛЬКО машинный результат (txt/json/srt/vtt/md при
 отсутствии `-o`); всё декоративное — баннеры, summary, предупреждения, прогресс —
-идёт в stderr. Это позволяет `dialogscribe transcribe a.m4a -f json > out.json`
+идёт в stderr. Это позволяет `bloodtranscripts transcribe a.m4a -f json > out.json`
 и `route-a … -f json > out.json` давать валидный файл.
 
 Команды:
-    dialogscribe transcribe <input> [...]      # один файл
-    dialogscribe batch <inputs...> -o OUTDIR   # пакет (progress_callback)
-    dialogscribe route-a <folder> [...]        # подорожечно, без диаризации
-    dialogscribe gallery build|list|rm         # голосовые галереи (voiceprint)
-    dialogscribe glossary harvest [--apply]    # самообучение глоссария (лог L2)
-    dialogscribe serve [--host --port]         # dev-лаунчер web-API
+    bloodtranscripts transcribe <input> [...]      # один файл
+    bloodtranscripts batch <inputs...> -o OUTDIR   # пакет (progress_callback)
+    bloodtranscripts route-a <folder> [...]        # подорожечно, без диаризации
+    bloodtranscripts gallery build|list|rm         # голосовые галереи (voiceprint)
+    bloodtranscripts glossary harvest [--apply]    # самообучение глоссария (лог L2)
+    bloodtranscripts serve [--host --port]         # dev-лаунчер web-API
 """
 
 import os
@@ -172,12 +172,12 @@ def guarded(func):
     """Декоратор: TranscriberError→1, Ctrl-C→130, прочее→1 (+traceback при -v / env).
 
     Traceback включается флагом -v у команд, которые его имеют, либо переменной
-    окружения DIALOGSCRIBE_TRACEBACK (для команд без -v, напр. gallery).
+    окружения BLOODTRANSCRIPTS_TRACEBACK (для команд без -v, напр. gallery).
     """
 
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        verbose = bool(kwargs.get("verbose")) or bool(os.getenv("DIALOGSCRIBE_TRACEBACK"))
+        verbose = bool(kwargs.get("verbose")) or bool(os.getenv("BLOODTRANSCRIPTS_TRACEBACK"))
         try:
             return func(*args, **kwargs)
         except (click.ClickException, click.Abort):
@@ -353,9 +353,9 @@ def _make_transcriber(
 # Группа
 # --------------------------------------------------------------------------- #
 @click.group(context_settings={"help_option_names": ["-h", "--help"]})
-@click.version_option(__version__, "-V", "--version", prog_name="dialogscribe")
+@click.version_option(__version__, "-V", "--version", prog_name="bloodtranscripts")
 def cli():
-    """DialogScribe — транскрипция диалогов поверх GigaAM (CLI)."""
+    """BloodTranscripts — транскрипция диалогов поверх GigaAM (CLI)."""
 
 
 # --------------------------------------------------------------------------- #
@@ -611,8 +611,8 @@ def route_a(
 # gallery — голосовые галереи (voiceprint)
 # --------------------------------------------------------------------------- #
 def _gallery_dir() -> Path:
-    """Каталог хранения галерей (env DIALOGSCRIBE_GALLERY_DIR или ~/.cache)."""
-    env = os.getenv("DIALOGSCRIBE_GALLERY_DIR")
+    """Каталог хранения галерей (env BLOODTRANSCRIPTS_GALLERY_DIR или ~/.cache)."""
+    env = os.getenv("BLOODTRANSCRIPTS_GALLERY_DIR")
     base = Path(env) if env else Path.home() / ".cache" / "gigaam_transcriber" / "galleries"
     base.mkdir(parents=True, exist_ok=True)
     return base
@@ -779,7 +779,7 @@ def serve(host, port, reload):
         )
         sys.exit(1)
     _eecho(
-        f"DialogScribe API → http://{host}:{port}  "
+        f"BloodTranscripts API → http://{host}:{port}  "
         "(dev-режим; прод — за nginx по TLS через compose)"
     )
     uvicorn.run(
@@ -792,7 +792,7 @@ def serve(host, port, reload):
 
 
 def main():
-    """Entry point для console-script `dialogscribe`."""
+    """Entry point для console-script `bloodtranscripts`."""
     cli()
 
 

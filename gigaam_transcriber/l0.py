@@ -5,7 +5,7 @@
 + sidecar ``.sha256`` (целостность) — машинный субстрат для downstream (RAG и пр.).
 
 В custom L0 строится из ``manifest.json`` (чанки нескольких дорожек/коллов Route A/B);
-в DialogScribe источник — ``TranscriptionResult.segments`` (один аудиопоток), поэтому id
+в BloodTranscripts источник — ``TranscriptionResult.segments`` (один аудиопоток), поэтому id
 проще: ``<meeting>:<start.3f>:<speaker>:<ordinal>`` (без call_index/time_offset).
 
 I1 (verbatim): текст переносится дословно (``str(...)`` без нормализации). Чистое ядро

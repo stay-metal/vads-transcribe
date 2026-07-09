@@ -156,7 +156,7 @@ def test_main_clears_stale_ready_flag_before_consumer(tmp_path, monkeypatch):
     from gigaam_transcriber.server import run_gpu_worker
     from gigaam_transcriber.server.workers import READY_TOKEN_ENV
 
-    monkeypatch.setenv("DIALOGSCRIBE_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("BLOODTRANSCRIPTS_DATA_DIR", str(tmp_path))
     monkeypatch.setenv(READY_TOKEN_ENV, "sentinel")  # main перепишет; restore после теста
     monkeypatch.setattr(real_sys, "argv", list(real_sys.argv))  # main нормализует argv
     settings = Settings(data_dir=tmp_path, session_key="x")
@@ -206,7 +206,7 @@ def test_worker_exit_clears_ready_flag(tmp_path):
     import subprocess
     import sys
 
-    env = {**os.environ, "DIALOGSCRIBE_DATA_DIR": str(tmp_path)}
+    env = {**os.environ, "BLOODTRANSCRIPTS_DATA_DIR": str(tmp_path)}
     code = (
         "import huey.consumer as hc;"
         "hc.Consumer = type('FakeConsumer', (), "
@@ -270,7 +270,7 @@ def test_tasks_module_exposes_two_queues_without_model(tmp_path):
     import subprocess
     import sys
 
-    env = {**os.environ, "DIALOGSCRIBE_DATA_DIR": str(tmp_path)}
+    env = {**os.environ, "BLOODTRANSCRIPTS_DATA_DIR": str(tmp_path)}
     code = (
         "import sys;"
         "from gigaam_transcriber.server.tasks import gpu_huey, io_huey;"

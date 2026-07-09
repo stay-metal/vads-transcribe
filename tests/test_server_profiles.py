@@ -92,7 +92,7 @@ def test_mix_only_ignores_participant_tracks(tmp_path):
     _configure(c, watch, {"track_mode": "mix_only"})
     started = _drain(c, settings, transcriber)
     assert len(started) == 1 and started[0]["kind"] == "single"
-    data = json.loads((folder / "transcripts" / "dialogscribe" / "result.json").read_text())
+    data = json.loads((folder / "transcripts" / "bloodtranscripts" / "result.json").read_text())
     # single-путь фейка: один сегмент SPEAKER_00 (микс), не route_a-имена.
     assert {s["speaker"] for s in data["segments"]} == {"SPEAKER_00"}
 
@@ -104,7 +104,7 @@ def test_separate_makes_job_per_track_without_diarization(tmp_path):
     _configure(c, watch, {"track_mode": "separate"})
     started = _drain(c, settings, transcriber)
     assert len(started) == 2 and all(s["kind"] == "single" for s in started)
-    out = folder / "transcripts" / "dialogscribe"
+    out = folder / "transcripts" / "bloodtranscripts"
     assert (out / "Alice" / "result.json").exists()
     assert (out / "Bob" / "result.json").exists()
     jobs = c.get("/api/jobs").json()["jobs"]
@@ -206,7 +206,7 @@ def test_fixed_output_dir(tmp_path):
     assert len(started) == 1
     out = dest / folder.name
     assert (out / "result.json").exists() and (out / "transcript.txt").exists()
-    assert not (folder / "transcripts" / "dialogscribe" / "result.json").exists()
+    assert not (folder / "transcripts" / "bloodtranscripts" / "result.json").exists()
 
 
 def test_fixed_output_inside_watch_rejected(tmp_path):
@@ -230,7 +230,7 @@ def test_fixed_output_outside_allowlist_rejected(tmp_path, monkeypatch):
     root = tmp_path / "root"
     watch = root / "zoom"
     watch.mkdir(parents=True)
-    monkeypatch.setenv("DIALOGSCRIBE_LOCAL_WATCH_ROOT", str(root))
+    monkeypatch.setenv("BLOODTRANSCRIPTS_LOCAL_WATCH_ROOT", str(root))
     c, settings, _ = _make(tmp_path)
     r = c.put(
         "/api/ingest/source",
@@ -264,7 +264,7 @@ def test_watch_dir_allowlist_checked_before_existence(tmp_path, monkeypatch):
     # (нет оракула серверных путей).
     root = tmp_path / "root"
     root.mkdir()
-    monkeypatch.setenv("DIALOGSCRIBE_LOCAL_WATCH_ROOT", str(root))
+    monkeypatch.setenv("BLOODTRANSCRIPTS_LOCAL_WATCH_ROOT", str(root))
     from gigaam_transcriber.server.local_watch import validate_watch_dir
 
     settings = _make(tmp_path)[1]
@@ -325,7 +325,7 @@ def test_put_without_profile_keeps_saved_profile_and_params(tmp_path):
 # /api/fs/browse
 # --------------------------------------------------------------------------- #
 def test_fs_browse_lists_dirs_hides_dotfiles(tmp_path, monkeypatch):
-    monkeypatch.setenv("DIALOGSCRIBE_LOCAL_WATCH_ROOT", str(tmp_path))
+    monkeypatch.setenv("BLOODTRANSCRIPTS_LOCAL_WATCH_ROOT", str(tmp_path))
     c, _, _ = _make(tmp_path)
     (tmp_path / "Папка").mkdir()
     (tmp_path / ".скрытая").mkdir()
@@ -336,7 +336,7 @@ def test_fs_browse_lists_dirs_hides_dotfiles(tmp_path, monkeypatch):
 
 
 def test_fs_browse_outside_root_403(tmp_path, monkeypatch):
-    monkeypatch.setenv("DIALOGSCRIBE_LOCAL_WATCH_ROOT", str(tmp_path / "root"))
+    monkeypatch.setenv("BLOODTRANSCRIPTS_LOCAL_WATCH_ROOT", str(tmp_path / "root"))
     (tmp_path / "root").mkdir()
     c, _, _ = _make(tmp_path)
     assert c.get("/api/fs/browse", params={"path": str(tmp_path)}).status_code == 403
@@ -346,7 +346,7 @@ def test_fs_browse_outside_root_403(tmp_path, monkeypatch):
 
 
 def test_fs_browse_permission_error_is_not_500(tmp_path, monkeypatch):
-    monkeypatch.setenv("DIALOGSCRIBE_LOCAL_WATCH_ROOT", str(tmp_path))
+    monkeypatch.setenv("BLOODTRANSCRIPTS_LOCAL_WATCH_ROOT", str(tmp_path))
     c, _, _ = _make(tmp_path)
     locked = tmp_path / "закрыто"
     locked.mkdir(mode=0o000)
@@ -445,9 +445,9 @@ def test_merge_parts_into_single_job(tmp_path, monkeypatch):
     _enable_merge(monkeypatch)
     _configure(c, watch, {"parts_mode": "merge"})
     started = _drain(c, settings, transcriber)
-    # Обе части → ОДНА джоба, вывод в корень dialogscribe (без «Часть N»).
+    # Обе части → ОДНА джоба, вывод в корень bloodtranscripts (без «Часть N»).
     assert len(started) == 1 and started[0]["kind"] == "route_a"
-    out = folder / "transcripts" / "dialogscribe"
+    out = folder / "transcripts" / "bloodtranscripts"
     assert (out / "result.json").exists()
     assert not (out / "Часть 2").exists()
     data = json.loads((out / "result.json").read_text())
@@ -481,7 +481,7 @@ def test_late_part_gets_own_job_in_merge_mode(tmp_path, monkeypatch):
     _add_second_part(folder, participants=(("B", 2),))
     started = _drain(c, settings, transcriber)  # часть 2 доехала позже
     assert len(started) == 1 and started[0]["part"] == 2
-    assert (folder / "transcripts" / "dialogscribe" / "Часть 2" / "result.json").exists()
+    assert (folder / "transcripts" / "bloodtranscripts" / "Часть 2" / "result.json").exists()
 
 
 def test_merge_failure_is_retryable(tmp_path, monkeypatch):

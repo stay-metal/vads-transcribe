@@ -1,8 +1,8 @@
-"""manifest.json + resume — перенос идеи из custom (адаптировано под DialogScribe).
+"""manifest.json + resume — перенос идеи из custom (адаптировано под BloodTranscripts).
 
 Кэш результата по хэшу входного файла: повторный прогон уже обработанного файла
 пропускает ASR (восстановление из manifest). Это coarse-resume (skip-if-done) — не
-пер-чанковый чекпойнт custom (у DialogScribe нет стабильной chunk-единицы как AsrChunk),
+пер-чанковый чекпойнт custom (у BloodTranscripts нет стабильной chunk-единицы как AsrChunk),
 но устраняет повторный ASR при ре-прогоне/докатывании. Сегменты сериализуются через
 to_dict/from_dict; целостность — по file_hash (несовпадение → ре-транскрипция).
 """

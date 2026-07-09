@@ -53,7 +53,7 @@ def test_login_sets_cookie_and_unlocks_protected(client):
     r = _login(client)
     assert r.status_code == 200
     assert r.json() == {"status": "ok", "user": "admin"}
-    assert "ds_session" in client.cookies
+    assert "bt_session" in client.cookies
     r2 = client.get("/api/auth/me")
     assert r2.status_code == 200
     assert r2.json() == {"user": "admin"}
@@ -88,7 +88,7 @@ def test_protected_requires_session(client):
 
 def test_tampered_cookie_rejected(client):
     _login(client)
-    client.cookies.set("ds_session", "forged.value.zzz")
+    client.cookies.set("bt_session", "forged.value.zzz")
     assert client.get("/api/auth/me").status_code == 401
 
 
