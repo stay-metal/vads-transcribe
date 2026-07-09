@@ -293,6 +293,61 @@ def test_result_carries_original_speaker_and_rerename(tmp_path):
     assert "Алиса Петрова" in txt
 
 
+def test_jobs_list_date_filter(tmp_path):
+    # Диапазон дат по created_at: полуинтервал [date_from, date_to), границы в UTC.
+    from gigaam_transcriber.server.db import get_conn
+
+    c, settings = _make_with_settings(tmp_path, FakeTranscriber())
+    ids = []
+    for _ in range(2):
+        up = c.post("/api/uploads", files=[_file("mix.wav")]).json()
+        jid = c.post(
+            "/api/jobs", json={"recording_id": up["recording_id"], "diarization": "none"}
+        ).json()["job_id"]
+        ids.append(jid)
+    # проставляем разные даты создания
+    with get_conn(settings.db_path) as conn:
+        conn.execute(
+            "UPDATE jobs SET created_at=? WHERE id=?", ("2026-01-10T09:00:00+00:00", ids[0])
+        )
+        conn.execute(
+            "UPDATE jobs SET created_at=? WHERE id=?", ("2026-03-20T09:00:00+00:00", ids[1])
+        )
+
+    # только январь → первый джоб
+    jan = c.get(
+        "/api/jobs",
+        params={
+            "scope": "done",
+            "date_from": "2026-01-01T00:00:00Z",
+            "date_to": "2026-02-01T00:00:00Z",
+        },
+    ).json()
+    assert {j["id"] for j in jan["jobs"]} == {ids[0]}
+    assert jan["total"] == 1
+
+    # широкий диапазон → оба
+    both = c.get(
+        "/api/jobs",
+        params={
+            "scope": "done",
+            "date_from": "2026-01-01T00:00:00Z",
+            "date_to": "2026-12-31T00:00:00Z",
+        },
+    ).json()
+    assert {j["id"] for j in both["jobs"]} == set(ids)
+
+    # верхняя граница исключительна: до 2026-03-20 09:00 → только январь
+    upto = c.get(
+        "/api/jobs",
+        params={"scope": "done", "date_to": "2026-03-20T09:00:00Z"},
+    ).json()
+    assert {j["id"] for j in upto["jobs"]} == {ids[0]}
+
+    # битая дата → 400
+    assert c.get("/api/jobs", params={"date_from": "не-дата"}).status_code == 400
+
+
 class CapturingTranscriber(FakeTranscriber):
     last_kwargs = None
 
@@ -408,3 +463,60 @@ def test_endpoint_coverage_list_audio_srt(tmp_path):
 
     srt = c.get(f"/api/jobs/{job_id}/download", params={"format": "srt"}).text
     assert "-->" in srt
+
+
+def test_jobs_list_v2_filters_search_counts(tmp_path, monkeypatch):
+    # Страница джоб: title из записи, scope-фильтры, поиск, счётчики, пагинация.
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    c = _make(tmp_path)
+    for name in ("Дейли планёрка", "Синк команды"):
+        up = c.post("/api/uploads", files=[_file("Алиса.wav"), _file("Боб.wav")]).json()
+        # title записи задаётся при создании из имени первой дорожки
+        del name
+        c.post("/api/jobs", json={"recording_id": up["recording_id"]})
+
+    r = c.get("/api/jobs").json()
+    assert r["total"] == 2 and len(r["jobs"]) == 2
+    assert r["counts"]["done"] == 2 and r["counts"]["active"] == 0
+    assert all(j["title"] for j in r["jobs"])  # название записи доехало
+    assert all(j["started_at"] for j in r["jobs"])
+
+    # scope-фильтры
+    assert c.get("/api/jobs", params={"scope": "done"}).json()["total"] == 2
+    assert c.get("/api/jobs", params={"scope": "error"}).json()["total"] == 0
+    assert c.get("/api/jobs", params={"scope": "мусор"}).status_code == 400
+
+    # поиск по подстроке id
+    jid = r["jobs"][0]["id"]
+    hits = c.get("/api/jobs", params={"q": jid[:8]}).json()
+    assert hits["total"] == 1 and hits["jobs"][0]["id"] == jid
+
+    # пагинация
+    page = c.get("/api/jobs", params={"limit": 1, "offset": 1}).json()
+    assert page["total"] == 2 and len(page["jobs"]) == 1
+
+
+def test_jobs_list_avg_rtf_and_duration_upfront(tmp_path, monkeypatch):
+    # duration_sec проставляется ДО обработки (ffprobe), avg_rtf считается по done.
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setattr(media, "probe_duration", lambda p, **kw: 120.0)
+    c = _make(tmp_path, sync=False)  # не обрабатываем — джоба остаётся queued
+    up = c.post("/api/uploads", files=[_file("Алиса.wav"), _file("Боб.wav")]).json()
+    c.post("/api/jobs", json={"recording_id": up["recording_id"]})
+    r = c.get("/api/jobs").json()
+    job = r["jobs"][0]
+    assert job["state"] == "queued"
+    assert job["duration_sec"] == 120.0  # известна заранее — UI посчитает ETA
+    assert job["queue_position"] == 1
+    assert r["counts"]["queued"] == 1
+
+
+def test_jobs_search_escapes_like_wildcards(tmp_path, monkeypatch):
+    # «_» и «%» в поиске — литералы, а не шаблон (иначе «_» матчит всё).
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    c = _make(tmp_path)
+    up = c.post("/api/uploads", files=[_file("Алиса.wav"), _file("Боб.wav")]).json()
+    c.post("/api/jobs", json={"recording_id": up["recording_id"]})
+    assert c.get("/api/jobs", params={"q": "_"}).json()["total"] == 0
+    assert c.get("/api/jobs", params={"q": "%"}).json()["total"] == 0
+    assert c.get("/api/jobs", params={"q": "Алиса"}).json()["total"] == 1

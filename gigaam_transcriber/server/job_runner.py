@@ -144,6 +144,20 @@ def process_job(settings: Settings, job_id: str, transcriber) -> None:
         result_json = output_dir / "result.json"
         result_json.write_text(result.to_json(), encoding="utf-8")
 
+        # Локальный watch-конвейер: транскрипты сразу на диск в папку встречи
+        # (transcripts/dialogscribe) — потребитель читает их без web-UI.
+        if job["source"] == "local":
+            for fmt, render in (
+                ("md", result.to_md),
+                ("txt", result.to_txt),
+                ("srt", result.to_srt),
+                ("vtt", result.to_vtt),
+            ):
+                try:
+                    (output_dir / f"transcript.{fmt}").write_text(render(), encoding="utf-8")
+                except Exception as fe:  # noqa: BLE001 — формат best-effort
+                    logger.warning("формат %s не записан для джобы %s: %s", fmt, job_id, fe)
+
         if l0_records is not None:
             try:
                 from gigaam_transcriber.l0 import write_l0

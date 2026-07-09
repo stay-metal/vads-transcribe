@@ -112,6 +112,12 @@ export const IconCloud = (p: P) => (
   </Svg>
 );
 
+export const IconFolder = (p: P) => (
+  <Svg {...p}>
+    <path d="M22 18.5a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-13a2 2 0 0 1 2-2h4.6a2 2 0 0 1 1.6.8L11.5 6H20a2 2 0 0 1 2 2Z" />
+  </Svg>
+);
+
 export const IconGauge = (p: P) => (
   <Svg {...p}>
     <path d="M4 15a8 8 0 0 1 16 0" />
@@ -139,6 +145,13 @@ export const IconSearch = (p: P) => (
   <Svg {...p}>
     <circle cx="11" cy="11" r="6" />
     <path d="M20 20l-3.5-3.5" />
+  </Svg>
+);
+
+export const IconCalendar = (p: P) => (
+  <Svg {...p}>
+    <rect x="3" y="4.5" width="18" height="16" rx="2" />
+    <path d="M3 9h18M8 2.5v4M16 2.5v4" />
   </Svg>
 );
 

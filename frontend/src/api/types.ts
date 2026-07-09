@@ -20,7 +20,20 @@ export interface Job {
   device_fallback: boolean;
   duration_sec: number | null;
   created_at: string;
+  started_at?: string | null;
   finished_at: string | null;
+  source?: string | null;
+  title?: string | null;
+  track_count?: number | null;
+  queue_position?: number | null;
+}
+
+export interface JobsPage {
+  jobs: Job[];
+  total: number;
+  counts: { active: number; queued: number; done: number; error: number; canceled: number };
+  avg_rtf: number | null;
+  done_duration_sec: number;
 }
 
 export interface TrackRef {
@@ -40,6 +53,7 @@ export interface Segment {
   end: number;
   speaker: string | null;
   original_speaker?: string | null; // стабильный сырой ярлык — ключ правки
+  original_text?: string | null; // текст до ручной правки (overlay)
   confidence?: number | null;
   speaker_confidence?: number | null;
   provenance?: string;

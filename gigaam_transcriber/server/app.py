@@ -114,9 +114,11 @@ def create_app(settings: Settings | None = None, enqueue=None) -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(auth_router)
+    from .fs_api import router as fs_router
     from .galleries_api import router as galleries_router
     from .glossary_api import router as glossary_router
     from .jobs import router as jobs_router
+    from .presets import router as presets_router
     from .recordings import router as recordings_router
     from .uploads import router as uploads_router
     from .yandex import router as yandex_router
@@ -125,6 +127,8 @@ def create_app(settings: Settings | None = None, enqueue=None) -> FastAPI:
     app.include_router(recordings_router)
     app.include_router(jobs_router)
     app.include_router(yandex_router)
+    app.include_router(fs_router)
+    app.include_router(presets_router)
     app.include_router(glossary_router)
     app.include_router(galleries_router)
 

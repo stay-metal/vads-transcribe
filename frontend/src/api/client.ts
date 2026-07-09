@@ -1,4 +1,4 @@
-import type { Job, TranscriptResult, TrackRef, UploadResult } from "./types";
+import type { Job, JobsPage, TranscriptResult, TrackRef, UploadResult } from "./types";
 
 // Глобальный обработчик истёкшей сессии (регистрируется в AuthProvider).
 let onUnauthorized: (() => void) | null = null;
@@ -79,7 +79,24 @@ export const api = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
-  listJobs: () => req<{ jobs: Job[] }>("/api/jobs"),
+  listJobs: (params?: {
+    q?: string;
+    scope?: string;
+    date_from?: string;
+    date_to?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
+    const sp = new URLSearchParams();
+    if (params?.q) sp.set("q", params.q);
+    if (params?.scope) sp.set("scope", params.scope);
+    if (params?.date_from) sp.set("date_from", params.date_from);
+    if (params?.date_to) sp.set("date_to", params.date_to);
+    if (params?.limit) sp.set("limit", String(params.limit));
+    if (params?.offset) sp.set("offset", String(params.offset));
+    const qs = sp.toString();
+    return req<JobsPage>(`/api/jobs${qs ? `?${qs}` : ""}`);
+  },
   getJob: (id: string) => req<Job>(`/api/jobs/${id}`),
   cancelJob: (id: string) => req<unknown>(`/api/jobs/${id}/cancel`, { method: "POST" }),
   result: (id: string) => req<TranscriptResult>(`/api/jobs/${id}/result`),
@@ -88,6 +105,24 @@ export const api = {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ edits }),
+    }),
+  putSegmentText: (id: string, index: number, text: string) =>
+    req<unknown>(`/api/jobs/${id}/segments`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ index, text }),
+    }),
+  writeTranscript: (id: string, format?: string) =>
+    req<{ written: string; format: string }>(
+      `/api/jobs/${id}/write${format ? `?format=${format}` : ""}`,
+      { method: "POST" },
+    ),
+  getSettings: () => req<{ transcript_format: string }>("/api/settings"),
+  putSettings: (transcript_format: string) =>
+    req<{ transcript_format: string }>("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ transcript_format }),
     }),
   audioUrl: (id: string) => `/api/jobs/${id}/audio`,
   downloadUrl: (id: string, format: string) =>
@@ -132,22 +167,84 @@ export const api = {
   deleteGallery: (name: string) =>
     req<{ deleted: string }>(`/api/galleries/${encodeURIComponent(name)}`, { method: "DELETE" }),
 
-  // --- Авто-watch источника (периодический опрос watch_dir) ---
-  getIngestSource: () => req<IngestSource>("/api/ingest/source"),
-  putIngestSource: (body: { watch_dir: string; enabled: boolean; poll_interval: number }) =>
+  // --- Авто-watch источников (yandex — облако, local — папка Zoom-выгрузок) ---
+  getIngestSource: (sourceType: SourceType = "yandex") =>
+    req<IngestSource>(`/api/ingest/source?source_type=${sourceType}`),
+  putIngestSource: (body: {
+    watch_dir: string;
+    enabled: boolean;
+    poll_interval: number;
+    source_type?: SourceType;
+    scan_profile?: ScanProfileT;
+  }) =>
     req<{ configured: boolean; watch_dir: string; enabled: boolean }>("/api/ingest/source", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }),
+  localScanNow: () =>
+    req<{ scanned: boolean; started: { job_id: string; kind: string; part: number }[] }>(
+      "/api/ingest/local/scan",
+      { method: "POST" },
+    ),
+
+  // --- Серверный браузер каталогов (выбор папки из UI) ---
+  fsBrowse: (path: string) =>
+    req<FsBrowse>(`/api/fs/browse?path=${encodeURIComponent(path)}`),
+
+  // --- Пресеты раскладки источника ---
+  listScanPresets: () => req<{ presets: ScanPreset[] }>("/api/scan-presets"),
+  createScanPreset: (name: string, body: ScanProfileT) =>
+    req<{ id: string; name: string }>("/api/scan-presets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, body }),
+    }),
+  deleteScanPreset: (id: string) =>
+    req<void>(`/api/scan-presets/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };
+
+export type SourceType = "yandex" | "local";
+
+export interface ScanOutputT {
+  mode: "beside" | "fixed";
+  subdir: string;
+  dir: string | null;
+}
+
+export interface ScanProfileT {
+  layout: "zoom" | "plain";
+  tracks_subdir: string | null;
+  track_mode: "combine" | "separate" | "mix_only";
+  parts_mode: "merge" | "separate";
+  media_suffixes: string[];
+  skip_dirs: string[];
+  output: ScanOutputT;
+}
+
+export interface ScanPreset {
+  id: string;
+  name: string;
+  builtin: boolean;
+  body: ScanProfileT;
+}
+
+export interface FsBrowse {
+  path: string;
+  parent: string | null;
+  dirs: { name: string; path: string }[];
+  denied: boolean;
+}
 
 export interface IngestSource {
   configured: boolean;
+  source_type?: SourceType;
   watch_dir?: string;
   enabled?: boolean;
   poll_interval?: number;
   default_params?: Record<string, unknown>;
+  scan_profile?: Partial<ScanProfileT>;
+  last_scan_at?: string | null;
 }
 
 export interface Gallery {

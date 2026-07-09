@@ -62,6 +62,82 @@ def ffmpeg_available() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
+def probe_duration(path: Path, *, timeout: int = 60) -> float | None:
+    """Длительность медиафайла в секундах через ffprobe; None при любой ошибке."""
+    if shutil.which("ffprobe") is None:
+        return None
+    try:
+        out = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "quiet",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+                str(path),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        ).stdout.strip()
+        return float(out)
+    except (subprocess.SubprocessError, ValueError, OSError):
+        return None
+
+
+def concat_track_parts(
+    parts: list[tuple[list[Path], float]], out_path: Path, *, timeout: int = 1800
+) -> Path:
+    """Склеить дорожку участника из ЧАСТЕЙ записи (стоп/старт Zoom) в один файл.
+
+    Каждая часть — (files, duration): пусто → тишина длительностью части
+    (участник отсутствовал; дорожки Zoom выровнены к началу части и имеют её
+    полную длительность), несколько файлов → amix (перезаходы участника,
+    каждый файл полной длительности). Части идут встык — глобальный таймлайн
+    транскрипта. Всё приводится к 16 кГц mono (вход ASR), кодек AAC.
+    """
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd: list[str] = ["ffmpeg", "-nostdin", "-y"]
+    filters: list[str] = []
+    seg_labels: list[str] = []
+    in_idx = 0
+    norm = "aresample=16000,aformat=sample_fmts=fltp:channel_layouts=mono"
+    for i, (files, duration) in enumerate(parts):
+        if not files:
+            filters.append(f"anullsrc=r=16000:cl=mono:d={max(duration, 0.1):.3f}[p{i}]")
+        elif len(files) == 1:
+            cmd += ["-i", str(files[0])]
+            filters.append(f"[{in_idx}:a]{norm}[p{i}]")
+            in_idx += 1
+        else:
+            for f in files:
+                cmd += ["-i", str(f)]
+            ins = "".join(f"[{in_idx + j}:a]" for j in range(len(files)))
+            filters.append(
+                f"{ins}amix=inputs={len(files)}:duration=longest:normalize=0,{norm}[p{i}]"
+            )
+            in_idx += len(files)
+        seg_labels.append(f"[p{i}]")
+    filters.append(f"{''.join(seg_labels)}concat=n={len(parts)}:v=0:a=1[out]")
+    cmd += [
+        "-filter_complex",
+        ";".join(filters),
+        "-map",
+        "[out]",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "96k",
+        str(out_path),
+    ]
+    subprocess.run(cmd, check=True, capture_output=True, timeout=timeout)
+    return out_path
+
+
 def downmix_tracks(paths: list[Path], out_path: Path, *, timeout: int = 600) -> Path:
     """Свести дорожки в один воспроизводимый AAC/M4A-файл (ffmpeg amix).
 

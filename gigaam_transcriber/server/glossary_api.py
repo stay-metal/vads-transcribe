@@ -52,7 +52,17 @@ def put_glossary(
         )
     path = _glossary_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    # Обновляем ТОЛЬКО people/terms: остальные ключи файла (version, _README,
+    # будущие секции) сохраняются — иначе каждый PUT из UI их молча выбрасывал бы.
+    doc: dict = {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            doc = loaded
+    except (OSError, ValueError):
+        pass
+    doc.update(glossary)
     tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(glossary, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(tmp, path)
     return {"people": payload.people, "terms": payload.terms}

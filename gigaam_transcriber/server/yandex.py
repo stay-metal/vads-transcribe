@@ -522,20 +522,35 @@ class IngestSourceIn(BaseModel):
     watch_dir: str
     enabled: bool = False
     poll_interval: int = 300
-    default_params: dict = {}
+    # None → «не менять сохранённое» (иначе PUT из UI, не знающего про поле,
+    # затирал бы его дефолтом).
+    default_params: dict | None = None
+    scan_profile: dict | None = None
+    source_type: str = "yandex"  # yandex | local (обратная совместимость — Яндекс)
+
+
+def _source_type_or_400(raw: str) -> str:
+    if raw not in ("yandex", "local"):
+        raise HTTPException(400, "source_type: yandex|local")
+    return raw
 
 
 @router.get("/api/ingest/source")
-def get_source(request: Request, user: str = Depends(require_session)) -> dict:
-    src = get_ingest_source(request.app.state.settings.db_path)
+def get_source(
+    request: Request, source_type: str = "yandex", user: str = Depends(require_session)
+) -> dict:
+    src = get_ingest_source(request.app.state.settings.db_path, _source_type_or_400(source_type))
     if src is None:
-        return {"configured": False}
+        return {"configured": False, "source_type": source_type}
     return {
         "configured": True,
+        "source_type": source_type,
         "watch_dir": src["watch_dir"],
         "enabled": src["enabled"],
         "poll_interval": src["poll_interval"],
         "default_params": json.loads(src["default_params"] or "{}"),
+        "scan_profile": json.loads(src.get("scan_profile") or "{}"),
+        "last_scan_at": src.get("last_scan_at"),
     }
 
 
@@ -544,18 +559,94 @@ def put_source(
     payload: IngestSourceIn, request: Request, user: str = Depends(require_session)
 ) -> dict:
     settings = request.app.state.settings
-    watch_dir = os.getenv("DIALOGSCRIBE_YANDEX_WATCH_DIR", "/")
-    # Конфигурируемый watch_dir обязан быть под серверным allowlist (анти-обход).
-    if not _under_watch_dir(payload.watch_dir, watch_dir):
-        raise HTTPException(403, "watch_dir вне разрешённой области")
+    source_type = _source_type_or_400(payload.source_type)
+    scan_profile_json: str | None = None
+    if source_type == "yandex":
+        watch_dir = os.getenv("DIALOGSCRIBE_YANDEX_WATCH_DIR", "/")
+        # Конфигурируемый watch_dir обязан быть под серверным allowlist (анти-обход).
+        if not _under_watch_dir(payload.watch_dir, watch_dir):
+            raise HTTPException(403, "watch_dir вне разрешённой области")
+    else:
+        from .local_watch import validate_output_profile, validate_watch_dir
+        from .zoom_scan import ScanProfile
+
+        problem = validate_watch_dir(settings, payload.watch_dir)
+        if problem:
+            raise HTTPException(400, problem)
+        # Хранить развёрнутый путь: «~» пользователя детерминированно
+        # раскрывается здесь, а не в каждом потребителе.
+        payload.watch_dir = str(Path(payload.watch_dir).expanduser())
+        if payload.scan_profile is not None:
+            from pydantic import ValidationError
+
+            from .presets import ScanProfileIn
+
+            try:
+                validated = ScanProfileIn(**payload.scan_profile)
+            except ValidationError:
+                raise HTTPException(400, "Некорректный профиль раскладки")
+            problem = validate_output_profile(
+                settings, payload.watch_dir, ScanProfile.from_dict(validated.model_dump())
+            )
+            if problem:
+                raise HTTPException(400, problem)
+            scan_profile_json = json.dumps(validated.model_dump(), ensure_ascii=False)
+        else:
+            # scan_profile не прислан («не менять») — но НОВЫЙ watch_dir обязан
+            # быть совместим с СОХРАНЁННЫМ профилем (иначе fixed-вывод мог бы
+            # оказаться внутри новой наблюдаемой папки).
+            from .local_watch import profile_from_source
+
+            saved = get_ingest_source(settings.db_path, "local")
+            if saved is not None:
+                problem = validate_output_profile(
+                    settings, payload.watch_dir, profile_from_source(saved)
+                )
+                if problem:
+                    raise HTTPException(400, f"Сохранённый профиль несовместим: {problem}")
     upsert_ingest_source(
         settings.db_path,
         payload.watch_dir,
         payload.enabled,
         max(60, int(payload.poll_interval)),
-        json.dumps(payload.default_params, ensure_ascii=False),
+        default_params_json=(
+            json.dumps(payload.default_params, ensure_ascii=False)
+            if payload.default_params is not None
+            else None
+        ),
+        source_type=source_type,
+        scan_profile_json=scan_profile_json,
     )
-    return {"configured": True, "watch_dir": payload.watch_dir, "enabled": payload.enabled}
+    return {
+        "configured": True,
+        "source_type": source_type,
+        "watch_dir": payload.watch_dir,
+        "enabled": payload.enabled,
+    }
+
+
+@router.post("/api/ingest/local/scan")
+def local_scan_now(request: Request, user: str = Depends(require_session)) -> dict:
+    """Немедленный проход по локальной папке (кнопка «Сканировать сейчас»).
+
+    Локальная ФС — скан быстрый, выполняем в запросе; GPU-работа всё равно
+    уходит в очередь через app.state.enqueue."""
+    from .local_watch import poll_local_source, validate_watch_dir
+    from .repository import set_ingest_last_scan
+
+    settings = request.app.state.settings
+    src = get_ingest_source(settings.db_path, "local")
+    if src is None:
+        raise HTTPException(400, "Локальная папка не настроена")
+    # Папка могла исчезнуть после настройки — честная ошибка вместо
+    # ложного «всё обработано» (poll молча вернул бы пустой список).
+    problem = validate_watch_dir(settings, src["watch_dir"])
+    if problem:
+        raise HTTPException(400, problem)
+    enqueue = getattr(request.app.state, "enqueue", None)
+    set_ingest_last_scan(settings.db_path, "local")
+    started = poll_local_source(settings, enqueue, force=True)
+    return {"scanned": True, "started": started}
 
 
 def _name(filename: str) -> str:
@@ -596,6 +687,14 @@ def ingest_pull(
         if kind == "single":
             params["diarization"] = "pyannote" if os.getenv("HF_TOKEN") else "none"
         job_id = create_job(db, mode=kind, source="yandex", recording_id=rec_id, params=params)
+        if tracks:
+            # Длительность аудио — заранее (ETA в UI); финиш перезапишет фактической.
+            from .media import probe_duration
+            from .repository import set_job_duration
+
+            dur = probe_duration(Path(tracks[0]["path"]))
+            if dur:
+                set_job_duration(db, job_id, dur)
         output_dir = Path(settings.data_dir) / "outputs" / job_id
         set_job_dirs(
             db,

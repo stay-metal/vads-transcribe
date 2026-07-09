@@ -11,6 +11,7 @@ ready-флаг для /readyz. Прикладные задачи (ASR-джобы
 from __future__ import annotations
 
 import os
+import sqlite3
 from pathlib import Path
 
 from huey import crontab
@@ -68,13 +69,48 @@ def poll_yandex_task() -> None:
     from .yandex import build_client_from_settings, poll_ingest_sources
 
     settings = Settings.from_env()
-    src = get_ingest_source(settings.db_path)
+    try:
+        src = get_ingest_source(settings.db_path)
+    except sqlite3.OperationalError:
+        return  # схема ещё не мигрирована (api не стартовал) — до следующего тика
     if not src or not src["enabled"]:
         return
     client = build_client_from_settings(settings)
     if client is None:
         return
     poll_ingest_sources(settings, client, enqueue_io=lambda s, k, t: pull_recording(s, k, t))
+
+
+@io_huey.periodic_task(crontab(minute="*"))
+@io_huey.lock_task("local-ingest-poll")
+def poll_local_task() -> None:
+    """Авто-watch локальной папки Zoom-выгрузок (io, без GPU; основной флоу).
+
+    Кроны huey — минутные; фактический интервал соблюдаем по `last_scan_at`
+    (poll_interval из настроек). lock_task — против наслоения проходов."""
+    from datetime import datetime, timezone
+
+    from .config import Settings
+    from .local_watch import poll_local_source
+    from .repository import get_ingest_source, set_ingest_last_scan
+
+    settings = Settings.from_env()
+    try:
+        src = get_ingest_source(settings.db_path, "local")
+    except sqlite3.OperationalError:
+        return  # схема ещё не мигрирована (api не стартовал) — до следующего тика
+    if not src or not src["enabled"]:
+        return
+    last = src.get("last_scan_at")
+    if last:
+        try:
+            elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(last)).total_seconds()
+            if elapsed < max(60, int(src["poll_interval"])):
+                return
+        except ValueError:
+            pass
+    set_ingest_last_scan(settings.db_path, "local")
+    poll_local_source(settings, enqueue_gpu=lambda job_id: run_job(job_id))
 
 
 @io_huey.task()

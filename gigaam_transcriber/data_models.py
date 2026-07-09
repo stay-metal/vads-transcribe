@@ -293,6 +293,20 @@ class TranscriptionResult:
 
         return "\n".join(lines)
 
+    def to_md(self) -> str:
+        """Markdown-протокол созвона: шапка + реплики «**Спикер** · `тайм`»."""
+        lines = ["# Транскрипт", ""]
+        bits = [_format_time_txt(self.duration)] if self.duration else []
+        if self.model_name:
+            bits.append(self.model_name)
+        bits.append(f"{len(self.segments)} реплик")
+        lines += ["_" + " · ".join(bits) + "_", ""]
+        for seg in self.segments:
+            ts = _format_time_txt(seg.start)
+            lines.append(f"**{seg.speaker}** · `{ts}`" if seg.speaker else f"`{ts}`")
+            lines += ["", seg.text.strip(), ""]
+        return "\n".join(lines).rstrip() + "\n"
+
     def save(self, path: Path | str, format: OutputFormat | str = "auto") -> Path:
         """
         Сохранение результата в файл.

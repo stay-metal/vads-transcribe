@@ -1,35 +1,23 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { useAuth } from "@/auth";
 import { cn } from "@/lib/utils";
 import { AtomBadge, Wordmark } from "./brand";
-import { IconRecords, IconUpload, IconSettings, IconLogout } from "./icons";
+import { IconRecords, IconUpload, IconCloud, IconBook, IconSettings, IconLogout } from "./icons";
 
 const NAV = [
   { to: "/", label: "Записи", icon: IconRecords, end: true },
   { to: "/upload", label: "Загрузить", icon: IconUpload, end: false },
+  { to: "/sources", label: "Источники", icon: IconCloud, end: false },
+  { to: "/glossary", label: "Словарь", icon: IconBook, end: false },
   { to: "/settings", label: "Настройки", icon: IconSettings, end: false },
 ];
 
-function HealthDot() {
-  const { data: ready } = useQuery({
-    queryKey: ["ready"],
-    queryFn: api.ready,
-    refetchInterval: (q) => (q.state.data ? 30000 : 4000),
-  });
-  const ok = ready === true;
-  return (
-    <div className="flex items-center gap-2 px-3 py-2 text-xs text-ink-muted">
-      <span className={cn("h-2 w-2 rounded-full", ok ? "bg-emerald-500" : "animate-pulse-node bg-amber-400")} />
-      {ok ? "Модель готова" : "Прогрев модели…"}
-    </div>
-  );
-}
-
 export function Layout() {
-  const { user, setUser } = useAuth();
+  const { setUser } = useAuth();
   const nav = useNavigate();
+  // Страница конкретного звонка — во всю ширину (волна/реплики), остальное — уже.
+  const wide = useLocation().pathname.startsWith("/jobs/");
   async function logout() {
     await api.logout().catch(() => {});
     setUser(null);
@@ -70,18 +58,14 @@ export function Layout() {
           ))}
         </nav>
 
-        <div className="border-t border-line px-2 py-3">
-          <HealthDot />
-          <div className="mt-1 flex items-center justify-between gap-2 px-3 py-1">
-            <span className="truncate text-[13px] text-ink">{user}</span>
-            <button
-              onClick={logout}
-              className="inline-flex items-center gap-1.5 rounded-control px-2 py-1 text-xs text-ink-muted transition-colors hover:bg-coral-soft hover:text-coral-500"
-            >
-              <IconLogout size={15} />
-              Выйти
-            </button>
-          </div>
+        <div className="border-t border-line p-3">
+          <button
+            onClick={logout}
+            className="flex w-full items-center justify-center gap-2 rounded-control px-3 py-2 text-sm text-ink-muted transition-colors hover:bg-coral-soft hover:text-coral-500"
+          >
+            <IconLogout size={16} />
+            Выйти
+          </button>
         </div>
       </aside>
 
@@ -96,6 +80,12 @@ export function Layout() {
             <NavLink to="/upload" className="rounded-control p-2 text-ink-muted hover:bg-canvas">
               <IconUpload size={18} />
             </NavLink>
+            <NavLink to="/sources" className="rounded-control p-2 text-ink-muted hover:bg-canvas">
+              <IconCloud size={18} />
+            </NavLink>
+            <NavLink to="/glossary" className="rounded-control p-2 text-ink-muted hover:bg-canvas">
+              <IconBook size={18} />
+            </NavLink>
             <NavLink to="/settings" className="rounded-control p-2 text-ink-muted hover:bg-canvas">
               <IconSettings size={18} />
             </NavLink>
@@ -105,7 +95,12 @@ export function Layout() {
           </div>
         </header>
 
-        <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8 md:px-8">
+        <main
+          className={cn(
+            "mx-auto w-full flex-1 px-4 py-8 md:px-8",
+            wide ? "max-w-[1900px]" : "max-w-[1200px]",
+          )}
+        >
           <Outlet />
         </main>
       </div>

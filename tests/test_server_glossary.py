@@ -48,6 +48,21 @@ def test_put_and_get_roundtrip(client):
     assert client.get("/api/glossary").json()["terms"]["кубер"] == "Kubernetes"
 
 
+def test_put_preserves_extra_top_level_keys(client):
+    # PUT правит только people/terms: version/_README и будущие секции файла
+    # не выбрасываются (регрессия: UI-сохранение молча теряло служебные поля).
+    path = client._cfg / "glossary.json"
+    path.write_text(
+        json.dumps({"_README": ["как править"], "version": 3, "people": {}, "terms": {}}),
+        encoding="utf-8",
+    )
+    r = client.put("/api/glossary", json={"people": {"оля": "Ольга"}, "terms": {}})
+    assert r.status_code == 200, r.text
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["version"] == 3 and saved["_README"] == ["как править"]
+    assert saved["people"] == {"оля": "Ольга"}
+
+
 def test_put_rejects_real_word_term_alias(client):
     # term-алиас, совпадающий с настоящим словом → lint блокирует (I1)
     r = client.put("/api/glossary", json={"people": {}, "terms": {"привет": "Hello"}})
