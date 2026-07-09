@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Link, useParams } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import WaveSurfer from "wavesurfer.js";
 import RegionsPlugin from "wavesurfer.js/dist/plugins/regions.esm.js";
 import TimelinePlugin from "wavesurfer.js/dist/plugins/timeline.esm.js";
@@ -11,6 +11,7 @@ import {
   Button,
   Card,
   ErrorCard,
+  Loading,
   Spinner,
   StageBar,
   StatusPill,
@@ -18,7 +19,7 @@ import {
   Toggle,
 } from "@/components/ui";
 import { IconPlay, IconPause, IconDownload, IconCheck, IconX } from "@/components/icons";
-import { cn, fmtTime, SPEAKER_COLORS, ACTIVE_STATES, STATUS_META } from "@/lib/utils";
+import { cn, fmtTime, parseRecordingTitle, SPEAKER_COLORS, ACTIVE_STATES, STATUS_META } from "@/lib/utils";
 
 /** provenance → русская метка + тон бейджа. */
 const PROV: Record<string, { label: string; tone: "neutral" | "azure" | "violet" | "green" | "coral" }> = {
@@ -37,14 +38,6 @@ const EXPORTS = [
   { fmt: "vtt", label: "VTT", hint: "Веб-субтитры" },
 ] as const;
 
-/** Имя записи из машинного заголовка (без даты-времени и подчёркиваний). */
-function cleanTitle(raw?: string | null): string {
-  if (!raw) return "Запись";
-  const m = raw.trim().match(/^\d{4}-\d{2}-\d{2}[ _T]\d{2}[.:-]\d{2}(?:[.:-]\d{2})?\s*(.*)$/);
-  const name = (m ? m[1] : raw).replace(/_+/g, " ").replace(/\s+/g, " ").trim();
-  return name || "Запись";
-}
-
 export default function TranscriptViewer() {
   const { jobId } = useParams<{ jobId: string }>();
   const jobQ = useQuery({
@@ -62,7 +55,14 @@ export default function TranscriptViewer() {
     const es = new EventSource(`/api/jobs/${jobId}/events`);
     es.addEventListener("job", (e) => {
       try {
-        qc.setQueryData(["job", jobId], JSON.parse((e as MessageEvent).data));
+        // Событие несёт только прогресс/статус (без title/track_count) — мержим
+        // поверх кэша, не затирая обогащённые поля записи.
+        const payload = JSON.parse((e as MessageEvent).data) as Partial<Job>;
+        qc.setQueryData<Job>(["job", jobId], (old) => (old ? { ...old, ...payload } : (payload as Job)));
+        // На терминальном статусе перечитываем полную запись (с именем встречи).
+        if (payload.state && !ACTIVE_STATES.includes(payload.state)) {
+          qc.invalidateQueries({ queryKey: ["job", jobId] });
+        }
       } catch {
         /* игнорируем битое событие */
       }
@@ -93,14 +93,6 @@ export default function TranscriptViewer() {
       meta={resultQ.data.metadata}
       refetch={resultQ.refetch}
     />
-  );
-}
-
-function Loading({ label }: { label: string }) {
-  return (
-    <div className="flex items-center gap-2 text-sm text-ink-muted">
-      <Spinner className="h-4 w-4" /> {label}
-    </div>
   );
 }
 
@@ -253,14 +245,18 @@ function Viewer({
     ws.zoom(next);
   }
 
-  async function renameSpeaker(original: string, value: string) {
-    await api.putSpeakers(jobId, { [original]: value }).catch(() => {});
-    refetch();
-  }
-  async function editText(index: number, text: string) {
-    await api.putSegmentText(jobId, index, text).catch(() => {});
-    refetch();
-  }
+  // Правки спикеров/текста — через мутации; mutateAsync пробрасывает ошибку в
+  // редактор, чтобы тот показал её и НЕ потерял черновик (баг: раньше глотали).
+  const speakersMut = useMutation({
+    mutationFn: (edits: Record<string, string>) => api.putSpeakers(jobId, edits),
+    onSuccess: () => refetch(),
+  });
+  const segmentMut = useMutation({
+    mutationFn: ({ index, text }: { index: number; text: string }) => api.putSegmentText(jobId, index, text),
+    onSuccess: () => refetch(),
+  });
+  const renameSpeaker = (original: string, value: string) => speakersMut.mutateAsync({ [original]: value });
+  const editText = (index: number, text: string) => segmentMut.mutateAsync({ index, text });
   async function writeFile() {
     setWriteMsg(null);
     try {
@@ -302,7 +298,7 @@ function Viewer({
           <div className="min-w-0">
             <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-coral-500">Транскрипт</div>
             <h1 className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-lg font-semibold tracking-tightest text-ink">
-              <span className="truncate" title={job.title ?? undefined}>{cleanTitle(job.title)}</span>
+              <span className="truncate" title={job.title ?? undefined}>{parseRecordingTitle(job.title).name || "Запись"}</span>
               <span className="flex items-center gap-x-2 text-xs font-normal text-ink-muted">
                 {dur != null && <Mono>{fmtTime(dur)}</Mono>}
                 <Mono>{segments.length} реплик</Mono>
@@ -435,11 +431,21 @@ function SpeakerEditor({
   original: string;
   value: string;
   color: string;
-  onRename: (original: string, value: string) => void;
+  onRename: (original: string, value: string) => Promise<unknown>;
 }) {
   const [draft, setDraft] = React.useState(value);
+  const [failed, setFailed] = React.useState(false);
   React.useEffect(() => setDraft(value), [value]);
-  const commit = () => draft.trim() && draft !== value && onRename(original, draft.trim());
+  async function commit() {
+    const next = draft.trim();
+    if (!next || next === value) return;
+    setFailed(false);
+    try {
+      await onRename(original, next);
+    } catch {
+      setFailed(true); // черновик не теряем — подсвечиваем поле и даём повторить
+    }
+  }
   return (
     <span className="inline-flex items-center gap-1.5">
       <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-white" style={{ background: color }} />
@@ -448,7 +454,13 @@ function SpeakerEditor({
         onChange={(e) => setDraft(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-        className="h-7 w-36 rounded-chip border border-transparent bg-transparent px-1.5 text-[13px] font-medium text-ink outline-none transition-colors hover:border-line focus:border-azure/60 focus:bg-white"
+        title={failed ? "Не удалось сохранить имя — попробуйте ещё раз" : undefined}
+        className={cn(
+          "h-7 w-36 rounded-chip border bg-transparent px-1.5 text-[13px] font-medium text-ink outline-none transition-colors focus:bg-white",
+          failed
+            ? "border-coral-500/70 focus:border-coral-500"
+            : "border-transparent hover:border-line focus:border-azure/60",
+        )}
       />
     </span>
   );
@@ -474,12 +486,33 @@ function SegmentRow({
   color: string;
   active: boolean;
   onPlay: () => void;
-  onEditText: (index: number, text: string) => void;
+  onEditText: (index: number, text: string) => Promise<unknown>;
 }) {
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState(seg.text);
+  const [saving, setSaving] = React.useState(false);
+  const [saveErr, setSaveErr] = React.useState<string | null>(null);
   React.useEffect(() => setDraft(seg.text), [seg.text]);
   const prov = seg.provenance ? PROV[seg.provenance] ?? { label: seg.provenance, tone: "neutral" as const } : PROV.gigaam;
+
+  // При ошибке сохранения — не закрываем правку и показываем причину (черновик цел).
+  async function commit() {
+    const next = draft.trim();
+    if (!next || next === seg.text) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    setSaveErr(null);
+    try {
+      await onEditText(idx, next);
+      setEditing(false);
+    } catch (e) {
+      setSaveErr(e instanceof Error ? e.message : "Не удалось сохранить правку");
+    } finally {
+      setSaving(false);
+    }
+  }
 
   // Клик по реплике — перемотка + проигрывание (но не мешаем выделению текста и правке).
   function onRowClick() {
@@ -539,26 +572,23 @@ function SegmentRow({
             className="w-full rounded-control border border-azure/60 bg-white px-3 py-2 text-[15px] leading-relaxed text-ink outline-none"
           />
           <div className="mt-2 flex items-center gap-2">
-            <Button
-              size="sm"
-              onClick={() => {
-                if (draft.trim() && draft !== seg.text) onEditText(idx, draft.trim());
-                setEditing(false);
-              }}
-            >
-              <IconCheck size={15} /> Сохранить
+            <Button size="sm" onClick={commit} disabled={saving}>
+              <IconCheck size={15} /> {saving ? "Сохраняем…" : "Сохранить"}
             </Button>
             <Button
               size="sm"
               variant="ghost"
+              disabled={saving}
               onClick={() => {
                 setDraft(seg.text);
+                setSaveErr(null);
                 setEditing(false);
               }}
             >
               <IconX size={15} /> Отмена
             </Button>
           </div>
+          {saveErr && <p className="mt-2 text-xs text-coral-600">{saveErr}</p>}
         </div>
       ) : (
         <p className="select-text pl-1 text-[15px] leading-relaxed text-ink">{seg.text}</p>
@@ -569,6 +599,7 @@ function SegmentRow({
 
 /* Попап «Внести в словарь»: выбор словаря (Имена/Термины) + каноничное написание. */
 function GlossaryPopup({ text, onClose }: { text: string; onClose: () => void }) {
+  const qc = useQueryClient();
   const [which, setWhich] = React.useState<"people" | "terms">("terms");
   const [heard, setHeard] = React.useState(text);
   const [canon, setCanon] = React.useState("");
@@ -580,6 +611,7 @@ function GlossaryPopup({ text, onClose }: { text: string; onClose: () => void })
     setBusy(true);
     setErr(null);
     try {
+      // Свежий снэпшот прямо перед PUT — окно гонки read-modify-write сужается.
       const g = await api.getGlossary();
       const next = {
         people: { ...g.people },
@@ -587,6 +619,7 @@ function GlossaryPopup({ text, onClose }: { text: string; onClose: () => void })
       };
       next[which][heard.trim()] = canon.trim();
       await api.putGlossary(next);
+      qc.invalidateQueries({ queryKey: ["glossary"] });
       onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Не удалось сохранить");

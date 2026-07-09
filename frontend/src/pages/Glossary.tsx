@@ -12,6 +12,20 @@ const toPairs = (o: Record<string, string>): Pair[] => Object.entries(o).map(([k
 const toObj = (ps: Pair[]): Record<string, string> =>
   Object.fromEntries(ps.filter((p) => p.k.trim()).map((p) => [p.k.trim(), p.v.trim()]));
 
+/** Левые части, встречающиеся больше одного раза (после trim, без пустых) —
+ * при сохранении такие дубли молча схлопывались бы (последний побеждает). */
+function dupKeys(ps: Pair[]): Set<string> {
+  const seen = new Set<string>();
+  const dup = new Set<string>();
+  for (const p of ps) {
+    const k = p.k.trim();
+    if (!k) continue;
+    if (seen.has(k)) dup.add(k);
+    else seen.add(k);
+  }
+  return dup;
+}
+
 const PAGE = 50; // рендерим порциями — список не тормозит на сотнях/тысячах записей
 
 const TAB_META: Record<Which, { label: string; hint: string; leftPh: string; rightPh: string }> = {
@@ -68,6 +82,7 @@ export default function Glossary() {
     .filter(({ p }) => !q || p.k.toLowerCase().includes(q) || p.v.toLowerCase().includes(q));
   const shown = q ? matched : matched.slice(0, limit);
   const hasMore = !q && matched.length > limit;
+  const dups = dupKeys(list); // повторяющиеся ключи текущего словаря — для подсветки
 
   function editAt(i: number, patch: Partial<Pair>) {
     setSaved(false);
@@ -84,14 +99,32 @@ export default function Glossary() {
   }
 
   async function save() {
+    // Дубли левой части схлопнулись бы молча — предупреждаем и не сохраняем.
+    const pd = dupKeys(people);
+    const td = dupKeys(terms);
+    if (pd.size || td.size) {
+      if (pd.size) setActive("people");
+      else setActive("terms");
+      setError(
+        `Повторяющиеся ключи слева: ${[...pd, ...td].join(", ")}. ` +
+          "Уберите дубли — иначе часть правил потеряется.",
+      );
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       const body: GlossaryT = { people: toObj(people), terms: toObj(terms) };
-      await api.putGlossary(body);
-      setBaseline(JSON.stringify({ p: people, t: terms }));
+      // baseline и черновик — от фактически сохранённого объекта (сервер мог
+      // нормализовать), а не от локальных пар.
+      const saved = await api.putGlossary(body);
+      const p = toPairs(saved.people);
+      const t = toPairs(saved.terms);
+      setPeople(p);
+      setTerms(t);
+      setBaseline(JSON.stringify({ p, t }));
       setSaved(true);
-      refetch();
+      refetch(); // держим кэш ["glossary"] свежим
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Не удалось сохранить словарь");
     } finally {
@@ -177,12 +210,18 @@ export default function Glossary() {
             {q ? "Ничего не найдено." : "Пока пусто — добавьте первую пару."}
           </div>
         ) : (
-          shown.map(({ p, i }) => (
-            <div key={i} className="flex items-center gap-2 px-3 py-2 sm:px-4">
+          shown.map(({ p, i }) => {
+            const isDup = !!p.k.trim() && dups.has(p.k.trim());
+            return (
+            <div
+              key={i}
+              className="flex items-center gap-2 px-3 py-2 sm:px-4"
+              title={isDup ? "Повторяющийся ключ — при сохранении останется только одно правило" : undefined}
+            >
               <Input
                 value={p.k}
                 placeholder={meta.leftPh}
-                className="h-9"
+                className={cn("h-9", isDup && "border-coral-500/70")}
                 onChange={(e) => editAt(i, { k: e.target.value })}
               />
               <span className="shrink-0 text-ink-muted">→</span>
@@ -200,7 +239,8 @@ export default function Glossary() {
                 <IconTrash size={15} />
               </button>
             </div>
-          ))
+            );
+          })
         )}
       </Card>
 

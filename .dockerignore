@@ -1,0 +1,36 @@
+# Контекст docker build: только то, что нужно образу.
+# Главное — НЕ запечь секреты (tmp/local.env, .env) и гигабайты dev-мусора в слои.
+
+.git
+.gitignore
+.venv
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.cache
+.claude
+.DS_Store
+**/.DS_Store
+
+# Секреты и локальные конфиги
+.env
+.env.*
+tmp/
+
+# Данные и записи (PII, сотни МБ)
+transcript/
+transcripts/
+folder_example/
+
+# Вендоренный GigaAM нужен образу, но без git-истории
+GigaAM/.git
+
+# Фронтенд собирается в первом этапе Dockerfile из исходников
+frontend/node_modules/
+frontend/dist/
+gigaam_transcriber/server/static/
+
+# Тесты и дев-инфраструктура в рантайм-образе не нужны
+tests/
+deploy/
+.pre-commit-config.yaml

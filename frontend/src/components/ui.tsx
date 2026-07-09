@@ -42,10 +42,6 @@ export function Input({ className, ...props }: React.InputHTMLAttributes<HTMLInp
   return <input className={cn(fieldBase, "h-10", className)} {...props} />;
 }
 
-export function Textarea({ className, ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <textarea className={cn(fieldBase, "py-2 font-mono text-[13px] leading-relaxed", className)} {...props} />;
-}
-
 export function Select({ className, children, ...props }: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <div className="relative">
@@ -318,6 +314,15 @@ export function Spinner({ className }: { className?: string }) {
       <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.2" strokeWidth="3" />
       <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
     </svg>
+  );
+}
+
+/** Инлайн-индикатор загрузки: спиннер + подпись. */
+export function Loading({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-2 text-sm text-ink-muted">
+      <Spinner className="h-4 w-4" /> {label}
+    </div>
   );
 }
 

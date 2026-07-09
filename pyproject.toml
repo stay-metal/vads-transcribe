@@ -62,6 +62,11 @@ second-opinion = [
     # сегменты-кандидаты (с латиницей), fusion правит латиницу/числа под I1.
     "faster-whisper>=1.0",
 ]
+onnx = [
+    # ONNX-бэкенды: полнографовый декод (--backend onnx, int8) и split-device
+    # энкодер (--onnx-encoder). CPU/CUDA, не MPS.
+    "onnxruntime>=1.17",
+]
 server = [
     # Web-сервер (M2+): FastAPI api + Huey 2-очереди + secure-by-default auth.
     "fastapi>=0.110",
@@ -83,7 +88,7 @@ dev = [
     "ruff>=0.1.0",
 ]
 all = [
-    "gigaam-transcriber[diarization,second-opinion,server,dev]",
+    "gigaam-transcriber[diarization,second-opinion,onnx,server,dev]",
 ]
 
 [project.scripts]

@@ -7,7 +7,7 @@ import { Layout } from "./components/Layout";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Upload from "./pages/Upload";
-import Sources from "./pages/Sources";
+import Sources from "./pages/sources";
 import Glossary from "./pages/Glossary";
 import RouteAConfirm from "./pages/RouteAConfirm";
 import SingleSubmit from "./pages/SingleSubmit";

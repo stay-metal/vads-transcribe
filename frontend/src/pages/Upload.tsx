@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "@/api/client";
 import { Button, Card, SectionTitle, ErrorCard, Mono } from "@/components/ui";
 import { IconUpload, IconUsers, IconMic, IconTrash } from "@/components/icons";
+import { plural } from "@/lib/utils";
 
 export default function Upload() {
   const nav = useNavigate();
@@ -105,7 +106,8 @@ export default function Upload() {
           </Button>
           {kind && (
             <span className="text-xs text-ink-muted">
-              {files.length} {files.length === 1 ? "файл" : "файла"} · {kind === "route_a" ? "по дорожкам" : "общий микс"}
+              {files.length} {plural(files.length, ["файл", "файла", "файлов"])} ·{" "}
+              {kind === "route_a" ? "по дорожкам" : "общий микс"}
             </span>
           )}
         </div>

@@ -27,7 +27,6 @@ function Svg({ size = 18, children, ...rest }: P & { children: React.ReactNode }
 
 export const IconRecords = (p: P) => (
   <Svg {...p}>
-    <path d="M3 5h18M3 12h18M3 19h18" opacity={0} />
     <rect x="3" y="4" width="18" height="6" rx="1.6" />
     <rect x="3" y="14" width="18" height="6" rx="1.6" />
   </Svg>
@@ -118,14 +117,6 @@ export const IconFolder = (p: P) => (
   </Svg>
 );
 
-export const IconGauge = (p: P) => (
-  <Svg {...p}>
-    <path d="M4 15a8 8 0 0 1 16 0" />
-    <path d="M12 15l3.5-3.5" />
-    <circle cx="12" cy="15" r="1.2" fill="currentColor" stroke="none" />
-  </Svg>
-);
-
 export const IconArchive = (p: P) => (
   <Svg {...p}>
     <rect x="4" y="5" width="16" height="4" rx="1" />
@@ -161,13 +152,6 @@ export const IconTrash = (p: P) => (
   </Svg>
 );
 
-export const IconAlert = (p: P) => (
-  <Svg {...p}>
-    <path d="M12 4l9 16H3L12 4Z" />
-    <path d="M12 10v4M12 17.5h.01" />
-  </Svg>
-);
-
 export const IconActivity = (p: P) => (
   <Svg {...p}>
     <path d="M3 12h4l2.5 7 5-14L17 12h4" />
@@ -178,11 +162,5 @@ export const IconLogout = (p: P) => (
   <Svg {...p}>
     <path d="M14 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4" />
     <path d="M10 12H3m0 0 3.5-3.5M3 12l3.5 3.5" />
-  </Svg>
-);
-
-export const IconSparkle = (p: P) => (
-  <Svg {...p}>
-    <path d="M12 4l1.6 4.8L18 10l-4.4 1.2L12 16l-1.6-4.8L6 10l4.4-1.2L12 4Z" />
   </Svg>
 );
