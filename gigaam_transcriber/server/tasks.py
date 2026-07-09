@@ -34,10 +34,15 @@ def _warm_gpu_singleton() -> None:
     # Импорт тяжёлой библиотеки — только в gpu-воркере, на старте consumer.
     global WARM_TRANSCRIBER
     from .config import Settings
+    from .db import init_db
     from .repository import reconcile_orphaned_jobs
     from .workers import warm_up
 
     settings = Settings.from_env()
+    # init_db идемпотентен; на свежем data_dir воркер может стартовать раньше api —
+    # без этого reconcile упал бы на «no such table: jobs» и уронил весь consumer.
+    settings.ensure_dirs()
+    init_db(settings.db_path)
     # Воркер только что стартовал → in-flight никого нет: осиротевшие стадии
     # (прерванные прошлым рестартом воркера) честно в error. Api при живом воркере
     # это НЕ делает (см. create_app) — реконсиль тут единственный достоверный.

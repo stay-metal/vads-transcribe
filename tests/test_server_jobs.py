@@ -202,9 +202,7 @@ def _make_with_settings(tmp_path, transcriber, sync=True):
             process_job(settings, job_id, transcriber)
         return "task-" + job_id
 
-    client = TestClient(create_app(settings, enqueue=enqueue))
-    client.post("/api/auth/login", data={"username": "admin", "password": PASSWORD})
-    return client, settings
+    return login_client(create_app(settings, enqueue=enqueue)), settings
 
 
 def test_execution_error_sets_error_state(tmp_path):

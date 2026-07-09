@@ -3,18 +3,14 @@
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
-from gigaam_transcriber.data_models import TranscriptionResult, TranscriptionSegment
 from gigaam_transcriber.server import crypto, media
 from gigaam_transcriber.server.app import create_app
-from gigaam_transcriber.server.config import Settings
 from gigaam_transcriber.server.job_runner import process_job
 from gigaam_transcriber.server.repository import get_yandex_auth
-from gigaam_transcriber.server.security import hash_password
 from gigaam_transcriber.server.yandex import ingest_pull
+from tests.conftest import FakeTranscriber, login_client, server_settings
 
-PASSWORD = "correct-horse-battery-staple"
 VALID = "valid-token"
 
 
@@ -137,47 +133,13 @@ class FakeYandex:
         Path(local).write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 16)
 
 
-class FakeTranscriber:
-    def transcribe_route_a(self, tracks, progress_callback=None, **kw):
-        segs = [TranscriptionSegment(text="реплика", start=0.0, end=1.0, speaker=n) for n in tracks]
-        return TranscriptionResult(
-            text="x",
-            segments=segs,
-            duration=5.0,
-            language="ru",
-            model_name="fake",
-            processing_time=1.0,
-            metadata={"route": "A"},
-        )
-
-    def transcribe(self, input_path, **kw):
-        segs = [TranscriptionSegment(text="привет", start=0.0, end=1.0, speaker="SPEAKER_00")]
-        return TranscriptionResult(
-            text="привет",
-            segments=segs,
-            duration=5.0,
-            language="ru",
-            model_name="fake",
-            processing_time=1.0,
-            metadata={},
-        )
-
-
 @pytest.fixture(autouse=True)
 def _no_ffmpeg(monkeypatch):
     monkeypatch.setattr(media, "ffmpeg_available", lambda: False)
 
 
 def _settings(tmp_path):
-    return Settings(
-        user="admin",
-        password_hash=hash_password(PASSWORD),
-        session_key="session-key-aaaaaaaaaaaaaaaa",
-        fernet_key="fernet-key-bbbbbbbbbbbbbbbb",
-        data_dir=tmp_path,
-        cookie_secure=False,
-        require_https=False,
-    )
+    return server_settings(tmp_path)
 
 
 def _make(tmp_path):
@@ -200,9 +162,7 @@ def _make(tmp_path):
         return "io"
 
     app.state.enqueue_io = sync_io
-    c = TestClient(app)
-    c.post("/api/auth/login", data={"username": "admin", "password": PASSWORD})
-    return c, settings
+    return login_client(app), settings
 
 
 def test_crypto_roundtrip():
@@ -537,13 +497,7 @@ def test_watch_dir_traversal_normalized(tmp_path, monkeypatch):
 
 
 def test_fernet_key_required_for_serve(tmp_path):
-    s = Settings(
-        user="admin",
-        password_hash=hash_password(PASSWORD),
-        session_key="s" * 20,
-        fernet_key="",
-        data_dir=tmp_path,
-    )
+    s = server_settings(tmp_path, fernet_key="")
     problems = s.validate_for_serve()
     assert any("FERNET_KEY" in p for p in problems)
 

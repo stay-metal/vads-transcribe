@@ -3,37 +3,18 @@
 import json
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
 from gigaam_transcriber.server.app import create_app
-from gigaam_transcriber.server.config import Settings
-from gigaam_transcriber.server.security import hash_password
-
-PASSWORD = "correct-horse-battery-staple"
-
-
-WAV = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 32
+from tests.conftest import WAV, login_client, server_settings
 
 
 def _client(tmp_path, monkeypatch):
     gdir = tmp_path / "galleries"
     gdir.mkdir()
     monkeypatch.setenv("DIALOGSCRIBE_GALLERY_DIR", str(gdir))
-    s = Settings(
-        user="admin",
-        password_hash=hash_password(PASSWORD),
-        session_key="s" * 20,
-        fernet_key="f" * 20,
-        data_dir=tmp_path,
-        cookie_secure=False,
-        require_https=False,
-    )
-    app = create_app(s)
+    app = create_app(server_settings(tmp_path))
     calls: list = []
     app.state.enqueue_gallery = lambda name, tracks: calls.append((name, tracks))
-    c = TestClient(app)
-    c.post("/api/auth/login", data={"username": "admin", "password": PASSWORD})
-    return c, gdir, calls
+    return login_client(app), gdir, calls
 
 
 def test_galleries_list_and_delete(tmp_path, monkeypatch):

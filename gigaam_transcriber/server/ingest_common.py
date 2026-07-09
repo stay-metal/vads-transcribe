@@ -51,7 +51,9 @@ def register_job(
         dur = media.probe_duration(Path(tracks[0]["path"]))
         if dur:
             set_job_duration(db, job_id, dur)
-    out = Path(output_dir) if output_dir is not None else Path(settings.data_dir) / "outputs" / job_id
+    out = (
+        Path(output_dir) if output_dir is not None else Path(settings.data_dir) / "outputs" / job_id
+    )
     set_job_dirs(
         db,
         job_id,

@@ -12,9 +12,7 @@ import json
 from pathlib import Path
 
 
-def load_result_with_overlay(
-    job: dict, edits: dict, text_edits: dict | None = None
-) -> dict | None:
+def load_result_with_overlay(job: dict, edits: dict, text_edits: dict | None = None) -> dict | None:
     """result.json с наложенными speaker/text-правками, или None если его ещё нет.
 
     Стабильный сырой ярлык спикера сохраняется в `original_speaker` (ключ правки —

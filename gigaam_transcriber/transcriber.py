@@ -715,6 +715,9 @@ class GigaAMTranscriber:
         all_segments: list[TranscriptionSegment] = []
         failed_tracks: list[dict[str, str]] = []
         second_opinion_changed = 0
+        # Агрегат счётчиков L2 по дорожкам — per-track метаданные иначе теряются
+        # при слиянии в общий результат, и запуск L2 был бы невидим при 0 правок.
+        second_opinion_stats: dict[str, int] = {}
         total = len(tracks)
         for idx, (name, path) in enumerate(tracks.items()):
             try:
@@ -735,6 +738,8 @@ class GigaAMTranscriber:
                 second_opinion_changed += self._apply_second_opinion(
                     r, Path(path), gloss_amap, participants=participants
                 )
+                for k, v in (r.metadata.get("second_opinion") or {}).items():
+                    second_opinion_stats[k] = second_opinion_stats.get(k, 0) + v
             for seg in r.segments:
                 seg.speaker = name
             all_segments.extend(r.segments)
@@ -762,6 +767,8 @@ class GigaAMTranscriber:
         # L2: не-обработанные дорожки → частичный транскрипт + предупреждение в UI.
         if failed_tracks:
             result.metadata["failed_tracks"] = failed_tracks
+        if second_opinion_stats:
+            result.metadata["second_opinion"] = second_opinion_stats
         if second_opinion_changed:
             result.metadata["second_opinion_changed"] = second_opinion_changed
         # L3: device_fallback на основном пути Route A (зеркало single-file ветки) —

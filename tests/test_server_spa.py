@@ -4,11 +4,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gigaam_transcriber.server.app import create_app
-from gigaam_transcriber.server.config import Settings
-from gigaam_transcriber.server.security import hash_password
 from gigaam_transcriber.server.static import static_dir
-
-PASSWORD = "correct-horse-battery-staple"
+from tests.conftest import server_settings
 
 spa_built = pytest.mark.skipif(
     not (static_dir() / "index.html").exists(),
@@ -17,16 +14,7 @@ spa_built = pytest.mark.skipif(
 
 
 def _client(tmp_path):
-    s = Settings(
-        user="admin",
-        password_hash=hash_password(PASSWORD),
-        session_key="k1aaaaaaaaaaaaaaaa",
-        fernet_key="k2bbbbbbbbbbbbbbbb",
-        data_dir=tmp_path,
-        cookie_secure=False,
-        require_https=False,
-    )
-    return TestClient(create_app(s))
+    return TestClient(create_app(server_settings(tmp_path)))
 
 
 def test_csp_header_present(tmp_path):

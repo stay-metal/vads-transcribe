@@ -5,24 +5,12 @@ from fastapi.testclient import TestClient
 
 from gigaam_transcriber.server.app import create_app
 from gigaam_transcriber.server.auth import LoginThrottle
-from gigaam_transcriber.server.config import Settings
 from gigaam_transcriber.server.security import hash_password
-
-PASSWORD = "correct-horse-battery-staple"
+from tests.conftest import PASSWORD, server_settings
 
 
 def _settings(tmp_path, **over):
-    base = {
-        "user": "admin",
-        "password_hash": hash_password(PASSWORD),
-        "session_key": "session-key-aaaaaaaaaaaaaaaa",
-        "fernet_key": "fernet-key-bbbbbbbbbbbbbbbb",
-        "data_dir": tmp_path,
-        "cookie_secure": False,
-        "require_https": False,
-    }
-    base.update(over)
-    return Settings(**base)
+    return server_settings(tmp_path, **over)
 
 
 # --------------------------------------------------------------------------- #
