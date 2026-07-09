@@ -4,18 +4,13 @@ import json
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
 from gigaam_transcriber.server import media
 from gigaam_transcriber.server.app import create_app
-from gigaam_transcriber.server.config import Settings
 from gigaam_transcriber.server.job_runner import process_job
 from gigaam_transcriber.server.local_watch import poll_local_source
-from gigaam_transcriber.server.security import hash_password
 from gigaam_transcriber.server.zoom_scan import ScanProfile, scan_meeting
-from tests.test_server_local_watch import MAGIC, FakeTranscriber, make_zoom_folder
-
-PASSWORD = "correct-horse-battery-staple"
+from tests.conftest import MAGIC, FakeTranscriber, login_client, make_zoom_folder, server_settings
 
 
 @pytest.fixture(autouse=True)
@@ -24,22 +19,12 @@ def _no_ffmpeg(monkeypatch):
 
 
 def _make(tmp_path):
-    settings = Settings(
-        user="admin",
-        password_hash=hash_password(PASSWORD),
-        session_key="session-key-aaaaaaaaaaaaaaaa",
-        fernet_key="fernet-key-bbbbbbbbbbbbbbbb",
-        data_dir=tmp_path / "data",
-        cookie_secure=False,
-        require_https=False,
-    )
+    settings = server_settings(tmp_path, data_dir=tmp_path / "data")
     transcriber = FakeTranscriber()
     app = create_app(
         settings, enqueue=lambda jid: (process_job(settings, jid, transcriber), "gpu")[1]
     )
-    c = TestClient(app)
-    c.post("/api/auth/login", data={"username": "admin", "password": PASSWORD})
-    return c, settings, transcriber
+    return login_client(app), settings, transcriber
 
 
 def _configure(c, watch_dir: Path, profile: dict | None = None):
@@ -158,7 +143,7 @@ def test_failed_job_not_retried_by_auto_poll_only_by_force(tmp_path):
             raise FileNotFoundError("битый файл")
 
     fail = lambda jid: process_job(settings, jid, Broken())  # noqa: E731
-    _drain(c, settings, transcriber and Broken())  # прогрев окна
+    _drain(c, settings, Broken())  # прогрев окна (Broken → джоба упадёт)
     poll_local_source(settings, fail)
     # Джоба упала; авто-поллер больше НЕ создаёт новых джоб.
     n_jobs = len(c.get("/api/jobs").json()["jobs"])
@@ -300,6 +285,23 @@ def test_invalid_profile_rejected(tmp_path):
             "watch_dir": str(watch),
             "source_type": "local",
             "scan_profile": {"track_mode": "чушь"},
+        },
+    )
+    assert r.status_code == 400
+
+
+@pytest.mark.parametrize("bad", ["/etc", "../../secret", "a/../../b"])
+def test_tracks_subdir_traversal_rejected(tmp_path, bad):
+    # tracks_subdir джойнится к папке встречи — абсолютный/«..» = traversal-чтение.
+    c, settings, _ = _make(tmp_path)
+    watch = tmp_path / "zoom"
+    watch.mkdir()
+    r = c.put(
+        "/api/ingest/source",
+        json={
+            "watch_dir": str(watch),
+            "source_type": "local",
+            "scan_profile": {"tracks_subdir": bad},
         },
     )
     assert r.status_code == 400
@@ -491,10 +493,12 @@ def test_merge_failure_is_retryable(tmp_path, monkeypatch):
     _configure(c, watch, {"parts_mode": "merge"})
     assert _drain(c, settings, transcriber) == []  # склейка упала — джоб нет
     assert len(c.get("/api/jobs").json()["jobs"]) == 0
-    # Claim не терминален → после «починки» ffmpeg обработка повторяется.
+    # Упавшая склейка (status='error') авто-поллером НЕ ретраится (не пережёвываем
+    # битый файл каждый тик), но ручной скан (force → allow_reclaim) повторяет её.
     _enable_merge(monkeypatch, fail=False)
     enqueue = lambda jid: process_job(settings, jid, transcriber)  # noqa: E731
-    assert len(poll_local_source(settings, enqueue)) == 1
+    assert poll_local_source(settings, enqueue) == []  # авто-поллер молчит
+    assert len(poll_local_source(settings, enqueue, force=True)) == 1  # ручной скан
 
 
 @pytest.mark.skipif(not __import__("shutil").which("ffmpeg"), reason="нужен ffmpeg")

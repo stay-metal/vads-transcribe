@@ -49,8 +49,7 @@ def normalize_path(path: str) -> Path:
     parent = p.parent
     if parent.exists():
         for f in parent.iterdir():
-            if unicodedata.normalize("NFC", f.name) == p.name:
-                return f
+            # Сравнение в одной нормализации покрывает и NFC-, и NFD-хранение имени.
             if unicodedata.normalize("NFD", f.name) == unicodedata.normalize("NFD", p.name):
                 return f
     return p  # не нашли — вернём как есть, Click сам выдаст ошибку существования

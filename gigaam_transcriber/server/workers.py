@@ -56,8 +56,6 @@ def assert_gpu_worker_config(worker_type: str, workers: int) -> None:
 
 def _default_transcriber_factory(settings: Settings):
     # Ленивый импорт: модель тянется только в gpu-воркере, не на уровне модуля.
-    import os
-
     from gigaam_transcriber import GigaAMTranscriber
 
     return GigaAMTranscriber(

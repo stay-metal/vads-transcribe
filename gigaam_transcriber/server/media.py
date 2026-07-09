@@ -8,23 +8,19 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import unicodedata
 from pathlib import Path
 
-# Расширения, которые разрешаем сохранять (имя на диске всё равно из uuid).
-SUPPORTED_SUFFIXES = {
-    ".wav",
-    ".mp3",
-    ".m4a",
-    ".mp4",
-    ".mov",
-    ".ogg",
-    ".oga",
-    ".opus",
-    ".flac",
-    ".webm",
-    ".mkv",
-    ".aac",
-}
+from ..exceptions import UnsupportedFormatError
+
+# Расширения, которые разрешаем сохранять — единый источник из библиотечной
+# константы (любой поддерживаемый аудио/видео-контейнер); имя на диске из uuid.
+SUPPORTED_SUFFIXES = UnsupportedFormatError.SUPPORTED_AUDIO | UnsupportedFormatError.SUPPORTED_VIDEO
+
+
+def nfc_label(filename: str | None, fallback: str) -> str:
+    """NFC-нормализованный stem имени файла или `fallback` (на диске бывают NFD-имена)."""
+    return unicodedata.normalize("NFC", Path(filename or fallback).stem) or fallback
 
 
 def sniff_media(head: bytes) -> str | None:

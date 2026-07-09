@@ -1,20 +1,21 @@
-"""Яндекс.Диск — ручной ingestion (M5, спека §4.3).
+"""Яндекс.Диск — ingestion (ручной pull + авто-watch).
 
-Токен личного аккаунта (debug-token) хранится Fernet-шифрованным в БД; проверяется
-`check_token()` ДО записи; тело токена не логируется. browse листает папку, pull
-делает exactly-once claim по `path:revision` (INSERT OR IGNORE) и ставит скачивание
-на io-очередь (не занимает GPU-слот). Скачивание → создание записи/джобы → gpu.
+Аутентификация: основной путь — OAuth Authorization Code (`oauth/start`→`callback`)
+с авто-refresh истёкшего access-токена (`_valid_access_token`/`_refresh_access`);
+`PUT /token` c debug-токеном личного аккаунта оставлен для совместимости. Токены
+хранятся Fernet-шифрованными в БД, тело токена не логируется.
+
+browse листает папку; pull/поллер делают exactly-once claim по `path:revision`
+(INSERT OR IGNORE) и ставят скачивание на io-очередь (не занимает GPU-слот).
+Скачивание → magic-bytes проверка → создание записи/джобы → gpu.
 
 Клиент абстрагирован (`app.state.yandex_factory`) — тесты подменяют фейком, без сети.
 """
 
 from __future__ import annotations
 
-import json
 import os
-import re
 import secrets
-import unicodedata
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -24,83 +25,43 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from ..exceptions import UnsupportedFormatError
-from . import crypto
+from . import crypto, media
 from .auth import require_session
+from .ingest_common import STABILITY_THRESHOLD, register_job, under_watch_dir
 from .repository import (
     claim_ingest,
-    create_job,
-    create_recording,
     get_ingest_source,
     get_yandex_auth,
     record_stability,
-    set_job_dirs,
-    set_recording_latest_job,
     set_yandex_token,
     update_ingest,
-    upsert_ingest_source,
 )
-
-# Авто-watch: клеймим запись только когда её сигнатура неизменна ≥ N поллингов.
-STABILITY_THRESHOLD = 2
+from .zoom_scan import drop_video_duplicates
 
 router = APIRouter()
 
-AUDIO_EXT = {
-    ".wav",
-    ".mp3",
-    ".m4a",
-    ".mp4",
-    ".mov",
-    ".ogg",
-    ".opus",
-    ".flac",
-    ".webm",
-    ".mkv",
-    ".aac",
-}
-
-# Видео-контейнеры из AUDIO_EXT: одиночный файл ingest'ится как есть (ffmpeg
-# вытащит дорожку), но при pull ПАПКИ видео-ДУБЛЬ встречи (Zoom кладёт рядом
-# audio*.m4a и video*.mp4 одной записи) не должен становиться второй
-# «дорожкой» → ложный route_a (F7). Набор выводим из библиотечной константы,
-# чтобы списки форматов не расходились (exceptions — лёгкий импорт, без ML).
-VIDEO_EXT = frozenset(UnsupportedFormatError.SUPPORTED_VIDEO) & AUDIO_EXT
-
-
-def _zoom_key(name: str) -> str:
-    """Хвост-число имени по Zoom-конвенции: audio1791450993 / video1791450993 → 1791450993.
-
-    Короткие хвосты (<4 цифр, «track2») — не идентификатор: пустая строка,
-    чтобы случайное совпадение цифры не склеило несвязанные файлы."""
-    m = re.search(r"(\d{4,})$", Path(name).stem)
-    return m.group(1) if m else ""
+# Расширения, принимаемые ingest'ом Я.Диска — единый источник из библиотечной
+# константы (exceptions лёгкий, без ML): любой поддерживаемый аудио/видео-контейнер
+# (ffmpeg вытащит дорожку). Видео-ДУБЛИ встречи отсеиваются на уровне папки.
+AUDIO_EXT = UnsupportedFormatError.SUPPORTED_AUDIO | UnsupportedFormatError.SUPPORTED_VIDEO
 
 
 def _dir_audio_entries(children: list[dict]) -> list[dict]:
     """Файлы-кандидаты ingest'а для папки: видео-дубли аудио-дорожек отсеиваются.
 
-    Видео выбрасывается ТОЛЬКО если у него есть аудио-пара (одинаковый stem или
-    Zoom-ключ «хвостовые цифры»); несвязанное видео остаётся дорожкой, как и до
-    F7. Папка из двух видео БЕЗ аудио (cloud-запись speaker_view+shared_screen)
-    по-прежнему даст route_a — известное ограничение, локальные записи Zoom
-    всегда содержат audio*.m4a.
+    Видео выбрасывается ТОЛЬКО при аудио-паре (Zoom кладёт рядом audio*.m4a и
+    video*.mp4 одной записи → ложный route_a, F7); несвязанное видео остаётся
+    дорожкой. Общая с zoom_scan реализация (`drop_video_duplicates`). Папка из
+    двух видео БЕЗ аудио по-прежнему даст route_a — известное ограничение.
     """
     files = [
         e for e in children if e["type"] == "file" and Path(e["name"]).suffix.lower() in AUDIO_EXT
     ]
-    audios = [e for e in files if Path(e["name"]).suffix.lower() not in VIDEO_EXT]
-    audio_keys = {Path(a["name"]).stem for a in audios} | {
-        k for a in audios if (k := _zoom_key(a["name"]))
-    }
-
-    def _is_dup_video(e: dict) -> bool:
-        if Path(e["name"]).suffix.lower() not in VIDEO_EXT:
-            return False
-        stem = Path(e["name"]).stem
-        zkey = _zoom_key(e["name"])
-        return stem in audio_keys or bool(zkey and zkey in audio_keys)
-
-    return [e for e in files if not _is_dup_video(e)]
+    return drop_video_duplicates(
+        files,
+        stem_of=lambda e: Path(e["name"]).stem,
+        suffix_of=lambda e: Path(e["name"]).suffix.lower(),
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -226,7 +187,10 @@ def _refresh_access(settings, auth: dict) -> str | None:
 
 def _valid_access_token(settings) -> str | None:
     """Актуальный access-токен: refresh если истёк (OAuth); debug-token без expires
-    отдаётся как есть (обратная совместимость)."""
+    отдаётся как есть (обратная совместимость).
+
+    Истёк, а refresh недоступен/упал → None: заведомо просроченный токен не
+    отдаём (вызывающий трактует None как «нужна переавторизация Яндекс»)."""
     from datetime import datetime, timezone
 
     auth = get_yandex_auth(settings.db_path)
@@ -235,12 +199,11 @@ def _valid_access_token(settings) -> str | None:
     expires_at = auth.get("expires_at")
     if expires_at:
         try:
-            if datetime.now(timezone.utc) >= datetime.fromisoformat(expires_at):
-                refreshed = _refresh_access(settings, auth)
-                if refreshed:
-                    return refreshed
+            expired = datetime.now(timezone.utc) >= datetime.fromisoformat(expires_at)
         except ValueError:
-            pass
+            expired = False
+        if expired:
+            return _refresh_access(settings, auth)  # None → нужна переавторизация
     return crypto.decrypt(settings.fernet_key, auth["token_enc"])
 
 
@@ -254,19 +217,15 @@ def _build_client(request: Request) -> Any:  # duck-typed клиент (реал
     return factory(token)
 
 
-def _under_watch_dir(path: str, watch_dir: str) -> bool:
-    """allowlist: путь обязан быть внутри watch_dir (анти-traversal по Я.Диску).
-
-    Нормализуем `..`/двойные слэши перед сравнением, иначе "/watch/../secret" или
-    "/watchEVIL" обошли бы наивный prefix-match.
-    """
-    import posixpath
-
-    if not watch_dir or watch_dir == "/":
-        return True
-    norm = posixpath.normpath(path)
-    base = posixpath.normpath(watch_dir)
-    return norm == base or norm.startswith(base + "/")
+def _require_client(request: Request) -> Any:
+    """Клиент или понятный HTTP-отказ. Токен настроен, но невалиден (истёк +
+    refresh не удался) → 401 «нужна переавторизация»; вовсе не настроен → 400."""
+    client = _build_client(request)
+    if client is not None:
+        return client
+    if get_yandex_auth(request.app.state.settings.db_path) is not None:
+        raise HTTPException(401, "Требуется переавторизация Яндекс.Диска")
+    raise HTTPException(400, "Токен Яндекс.Диска не настроен")
 
 
 # --------------------------------------------------------------------------- #
@@ -284,9 +243,14 @@ class PullIn(BaseModel):
 def status(request: Request, user: str = Depends(require_session)) -> dict:
     settings = request.app.state.settings
     auth = get_yandex_auth(settings.db_path)
+    connected = auth is not None
+    # check_ok = токен фактически годен СЕЙЧАС (истёкший обновляется по refresh);
+    # None → переавторизация. Refresh дёргается лишь при истечении (раз в час).
+    check_ok = connected and _valid_access_token(settings) is not None
     return {
-        "connected": auth is not None,
-        "check_ok": bool(auth and auth["check_ok"]),
+        "connected": connected,
+        "check_ok": check_ok,
+        "reason": None if check_ok or not connected else "Требуется переавторизация Яндекс.Диска",
         "oauth_available": _oauth_config() is not None,
     }
 
@@ -380,11 +344,9 @@ def oauth_callback(request: Request, code: str = "", state: str = "", error: str
 @router.get("/api/yandex/browse")
 def browse(request: Request, path: str = "/", user: str = Depends(require_session)) -> dict:
     watch_dir = os.getenv("DIALOGSCRIBE_YANDEX_WATCH_DIR", "/")
-    if not _under_watch_dir(path, watch_dir):
+    if not under_watch_dir(path, watch_dir):
         raise HTTPException(403, "Путь вне разрешённой папки")
-    client = _build_client(request)
-    if client is None:
-        raise HTTPException(400, "Токен Яндекс.Диска не настроен")
+    client = _require_client(request)
     try:
         entries = client.listdir(path)
     except Exception:
@@ -401,9 +363,12 @@ class IngestError(Exception):
         self.detail = detail
 
 
-def ingest_path(settings, client, path: str, enqueue_io) -> dict:
+def ingest_path(settings, client, path: str, enqueue_io, *, allow_reclaim: bool = False) -> dict:
     """Общий путь ingestion (ручной pull и авто-watch): claim по `path:revision` +
-    enqueue скачивания. Не HTTP-зависима — бросает IngestError, не HTTPException."""
+    enqueue скачивания. Не HTTP-зависима — бросает IngestError, не HTTPException.
+
+    `allow_reclaim` — переклеймить упавшую (`error`) загрузку той же ревизии:
+    True для ручного pull (пользователь явно повторяет), False для авто-поллера."""
     try:
         meta = client.get_meta(path)
     except Exception:
@@ -419,16 +384,24 @@ def ingest_path(settings, client, path: str, enqueue_io) -> dict:
         # порождать второй ingest той же встречи.
         revision = str(max((e.get("revision") or 0) for e in entries) or meta.get("revision") or 0)
     else:
-        entries = [meta | {"name": meta["name"], "path": meta["path"]}]
+        # Одиночный файл: расширение по allowlist ДО клейма (ручной pull мог указать
+        # на .txt/архив); контент дополнительно проверит magic-bytes после скачивания.
+        if Path(meta["name"]).suffix.lower() not in AUDIO_EXT:
+            raise IngestError(415, "Неподдерживаемый формат файла")
+        entries = [meta]
         kind = "single"
         revision = str(meta.get("revision") or 0)
 
     ingest_key = f"{path}:{revision}"
-    surrogate = claim_ingest(settings.db_path, ingest_key, meta.get("resource_id"))
+    surrogate = claim_ingest(
+        settings.db_path, ingest_key, meta.get("resource_id"), allow_reclaim=allow_reclaim
+    )
     if surrogate is None:  # уже подтягивали эту ревизию — дедуп, без второй джобы
         return {"status": "already_seen", "ingest_key_seen": True}
 
-    remote_tracks = [{"name": _name(e["name"]), "remote": e["path"]} for e in entries]
+    remote_tracks = [
+        {"name": media.nfc_label(e["name"], "track"), "remote": e["path"]} for e in entries
+    ]
     if enqueue_io is not None:
         enqueue_io(surrogate, kind, remote_tracks)
     return {"status": "pulling", "surrogate_id": surrogate, "kind": kind}
@@ -438,14 +411,13 @@ def ingest_path(settings, client, path: str, enqueue_io) -> dict:
 def pull(payload: PullIn, request: Request, user: str = Depends(require_session)) -> dict:
     settings = request.app.state.settings
     watch_dir = os.getenv("DIALOGSCRIBE_YANDEX_WATCH_DIR", "/")
-    if not _under_watch_dir(payload.path, watch_dir):
+    if not under_watch_dir(payload.path, watch_dir):
         raise HTTPException(403, "Путь вне разрешённой папки")
-    client = _build_client(request)
-    if client is None:
-        raise HTTPException(400, "Токен Яндекс.Диска не настроен")
+    client = _require_client(request)
     enqueue_io = getattr(request.app.state, "enqueue_io", None)
     try:
-        return ingest_path(settings, client, payload.path, enqueue_io)
+        # Ручной pull: повторный клик по упавшей загрузке должен переклеймить её.
+        return ingest_path(settings, client, payload.path, enqueue_io, allow_reclaim=True)
     except IngestError as e:
         raise HTTPException(e.status, e.detail)
 
@@ -497,7 +469,7 @@ def poll_ingest_sources(settings, client, enqueue_io) -> list[dict]:
         return []
     out: list[dict] = []
     for e in entries:
-        if not _under_watch_dir(e["path"], watch_dir):
+        if not under_watch_dir(e["path"], watch_dir):
             continue
         sig = _signature(client, e)
         if sig is None:
@@ -516,141 +488,6 @@ def build_client_from_settings(settings, factory=_default_factory):
     OAuth-refresh при истечении переиспользуется через `_valid_access_token`."""
     token = _valid_access_token(settings)
     return factory(token) if token else None
-
-
-class IngestSourceIn(BaseModel):
-    watch_dir: str
-    enabled: bool = False
-    poll_interval: int = 300
-    # None → «не менять сохранённое» (иначе PUT из UI, не знающего про поле,
-    # затирал бы его дефолтом).
-    default_params: dict | None = None
-    scan_profile: dict | None = None
-    source_type: str = "yandex"  # yandex | local (обратная совместимость — Яндекс)
-
-
-def _source_type_or_400(raw: str) -> str:
-    if raw not in ("yandex", "local"):
-        raise HTTPException(400, "source_type: yandex|local")
-    return raw
-
-
-@router.get("/api/ingest/source")
-def get_source(
-    request: Request, source_type: str = "yandex", user: str = Depends(require_session)
-) -> dict:
-    src = get_ingest_source(request.app.state.settings.db_path, _source_type_or_400(source_type))
-    if src is None:
-        return {"configured": False, "source_type": source_type}
-    return {
-        "configured": True,
-        "source_type": source_type,
-        "watch_dir": src["watch_dir"],
-        "enabled": src["enabled"],
-        "poll_interval": src["poll_interval"],
-        "default_params": json.loads(src["default_params"] or "{}"),
-        "scan_profile": json.loads(src.get("scan_profile") or "{}"),
-        "last_scan_at": src.get("last_scan_at"),
-    }
-
-
-@router.put("/api/ingest/source")
-def put_source(
-    payload: IngestSourceIn, request: Request, user: str = Depends(require_session)
-) -> dict:
-    settings = request.app.state.settings
-    source_type = _source_type_or_400(payload.source_type)
-    scan_profile_json: str | None = None
-    if source_type == "yandex":
-        watch_dir = os.getenv("DIALOGSCRIBE_YANDEX_WATCH_DIR", "/")
-        # Конфигурируемый watch_dir обязан быть под серверным allowlist (анти-обход).
-        if not _under_watch_dir(payload.watch_dir, watch_dir):
-            raise HTTPException(403, "watch_dir вне разрешённой области")
-    else:
-        from .local_watch import validate_output_profile, validate_watch_dir
-        from .zoom_scan import ScanProfile
-
-        problem = validate_watch_dir(settings, payload.watch_dir)
-        if problem:
-            raise HTTPException(400, problem)
-        # Хранить развёрнутый путь: «~» пользователя детерминированно
-        # раскрывается здесь, а не в каждом потребителе.
-        payload.watch_dir = str(Path(payload.watch_dir).expanduser())
-        if payload.scan_profile is not None:
-            from pydantic import ValidationError
-
-            from .presets import ScanProfileIn
-
-            try:
-                validated = ScanProfileIn(**payload.scan_profile)
-            except ValidationError:
-                raise HTTPException(400, "Некорректный профиль раскладки")
-            problem = validate_output_profile(
-                settings, payload.watch_dir, ScanProfile.from_dict(validated.model_dump())
-            )
-            if problem:
-                raise HTTPException(400, problem)
-            scan_profile_json = json.dumps(validated.model_dump(), ensure_ascii=False)
-        else:
-            # scan_profile не прислан («не менять») — но НОВЫЙ watch_dir обязан
-            # быть совместим с СОХРАНЁННЫМ профилем (иначе fixed-вывод мог бы
-            # оказаться внутри новой наблюдаемой папки).
-            from .local_watch import profile_from_source
-
-            saved = get_ingest_source(settings.db_path, "local")
-            if saved is not None:
-                problem = validate_output_profile(
-                    settings, payload.watch_dir, profile_from_source(saved)
-                )
-                if problem:
-                    raise HTTPException(400, f"Сохранённый профиль несовместим: {problem}")
-    upsert_ingest_source(
-        settings.db_path,
-        payload.watch_dir,
-        payload.enabled,
-        max(60, int(payload.poll_interval)),
-        default_params_json=(
-            json.dumps(payload.default_params, ensure_ascii=False)
-            if payload.default_params is not None
-            else None
-        ),
-        source_type=source_type,
-        scan_profile_json=scan_profile_json,
-    )
-    return {
-        "configured": True,
-        "source_type": source_type,
-        "watch_dir": payload.watch_dir,
-        "enabled": payload.enabled,
-    }
-
-
-@router.post("/api/ingest/local/scan")
-def local_scan_now(request: Request, user: str = Depends(require_session)) -> dict:
-    """Немедленный проход по локальной папке (кнопка «Сканировать сейчас»).
-
-    Локальная ФС — скан быстрый, выполняем в запросе; GPU-работа всё равно
-    уходит в очередь через app.state.enqueue."""
-    from .local_watch import poll_local_source, validate_watch_dir
-    from .repository import set_ingest_last_scan
-
-    settings = request.app.state.settings
-    src = get_ingest_source(settings.db_path, "local")
-    if src is None:
-        raise HTTPException(400, "Локальная папка не настроена")
-    # Папка могла исчезнуть после настройки — честная ошибка вместо
-    # ложного «всё обработано» (poll молча вернул бы пустой список).
-    problem = validate_watch_dir(settings, src["watch_dir"])
-    if problem:
-        raise HTTPException(400, problem)
-    enqueue = getattr(request.app.state, "enqueue", None)
-    set_ingest_last_scan(settings.db_path, "local")
-    started = poll_local_source(settings, enqueue, force=True)
-    return {"scanned": True, "started": started}
-
-
-def _name(filename: str) -> str:
-    return unicodedata.normalize("NFC", Path(filename).stem) or "track"
 
 
 # --------------------------------------------------------------------------- #
@@ -674,36 +511,27 @@ def ingest_pull(
             tmp = local.with_suffix(local.suffix + ".part")
             client.download(t["remote"], str(tmp))
             os.replace(tmp, local)  # atomic-rename после полного скачивания
+            # Формат — по сигнатуре, не по суффиксу: скачанное могло оказаться
+            # HTML-заглушкой/чужим файлом. Несоответствие → except → status=error
+            # + rmtree(work), запись/джоба НЕ создаются (как и при сбое download).
+            with open(local, "rb") as fh:
+                head = fh.read(64)
+            if media.sniff_media(head) is None:
+                raise UnsupportedFormatError(str(local))
             tracks.append({"name": t["name"], "path": str(local), "size": local.stat().st_size})
 
-        rec_id = create_recording(
-            db,
+        params: dict[str, Any] = {"glossary": True}
+        if kind == "single":
+            params["diarization"] = "pyannote" if os.getenv("HF_TOKEN") else "none"
+        rec_id, job_id = register_job(
+            settings,
             origin="yandex",
             kind=kind,
             tracks=tracks,
             title=tracks[0]["name"] if tracks else None,
-        )
-        params: dict[str, Any] = {"glossary": True}
-        if kind == "single":
-            params["diarization"] = "pyannote" if os.getenv("HF_TOKEN") else "none"
-        job_id = create_job(db, mode=kind, source="yandex", recording_id=rec_id, params=params)
-        if tracks:
-            # Длительность аудио — заранее (ETA в UI); финиш перезапишет фактической.
-            from .media import probe_duration
-            from .repository import set_job_duration
-
-            dur = probe_duration(Path(tracks[0]["path"]))
-            if dur:
-                set_job_duration(db, job_id, dur)
-        output_dir = Path(settings.data_dir) / "outputs" / job_id
-        set_job_dirs(
-            db,
-            job_id,
+            params=params,
             work_dir=str(work),
-            output_dir=str(output_dir),
-            manifest_path=str(output_dir / "manifest.json"),
         )
-        set_recording_latest_job(db, rec_id, job_id)
         update_ingest(db, surrogate_id, status="downloaded", recording_id=rec_id, job_id=job_id)
     except Exception:
         # claim остаётся не-терминальным → re-pull переклеймит; чистим частичное.

@@ -21,13 +21,16 @@ paths:
   `return`, без двойного запуска ASR.
 - Апдейты джобы (`update_job_progress`/`finish_job_ok`/`fail_job`) — под guard
   `WHERE state NOT IN ('done','error','canceled')` (терминальное не перетирать).
-- На старте `create_app` зови `reconcile_orphaned_jobs`: in-flight стадии → `error 'worker_restart'`
-  (SqliteHuey не возобновляет прерванные рестартом задачи — иначе poll висит).
+- `reconcile_orphaned_jobs` (in-flight стадии → `error 'worker_restart'`, SqliteHuey не возобновляет
+  прерванные задачи) зови на старте gpu-воркера (`@gpu_huey.on_startup`, там точно нет in-flight); в
+  `create_app` — ТОЛЬКО если воркер не жив (нет `settings.ready_flag_path`), иначе рестарт api убьёт
+  выполняющуюся джобу.
 - Периодику (retention) вешай только на `@io_huey.periodic_task(crontab(...))`; ничего GPU/модельного на
   `gpu_huey` периодически.
-- cancel честен лишь для `queued` (`cancel_job_if_queued`, CAS); running доводи до конца (HTTP 409) +
-  best-effort `revoke(huey_task_id)`.
+- cancel честен лишь для `queued` (`cancel_job_if_queued`, CAS); running доводи до конца (HTTP 409) —
+  huey-задача доотработает и запишет результат (SqliteHuey-revoke не заведён).
 - Скачивание Я.Диска — io-задача (`pull_recording`/`ingest_pull`); GPU занимай лишь финальным
   `enqueue run_job`, чтобы сетевой I/O не блокировал единственный GPU-слот.
-- Дедуп ingest — `claim_ingest` (INSERT OR IGNORE по `key=path:revision`): терминальные не переклеймивай,
-  застрявшие — да; наружу — только opaque `surrogate_id`.
+- Дедуп ingest — `claim_ingest` (INSERT OR IGNORE по `key=path:revision`): терминальные (`downloaded`/`done`)
+  и активные (`claimed`/`downloading`) не переклеймивай (второе скачивание/дубль-джоба); `error` —
+  только при `allow_reclaim` (ручной pull/скан, CAS `WHERE status='error'`); наружу — только opaque `surrogate_id`.

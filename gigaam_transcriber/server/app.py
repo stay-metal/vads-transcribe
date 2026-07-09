@@ -1,12 +1,12 @@
-"""FastAPI app-factory (M2 каркас).
+"""FastAPI app-factory.
 
-Процесс api: auth + REST + (в M4) SPA-статика. Модель НЕ держит и НЕ импортирует —
+Процесс api: auth + REST (/api) + SPA-статика. Модель НЕ держит и НЕ импортирует —
 на верхнем уровне нет ни `gigaam`, ни `GigaAMTranscriber` (инвариант «api без модели»).
 
 Middleware:
 - доверяем только HTTPS за nginx (отвергаем X-Forwarded-Proto != https);
 - CSRF defense-in-depth: Origin-check на мутирующих методах (поверх SameSite=Strict cookie);
-- базовые security-заголовки (nosniff / DENY / no-referrer).
+- security-заголовки (CSP/nosniff/DENY/no-referrer через setdefault — единственный источник).
 """
 
 from __future__ import annotations
@@ -73,8 +73,11 @@ def create_app(settings: Settings | None = None, enqueue=None) -> FastAPI:
     # §8 auto-bump: смена DIALOGSCRIBE_PASSWORD_HASH инвалидирует старые cookie.
     if settings.password_hash:
         reconcile_password_epoch(settings.db_path, settings.password_hash)
-    # Зависшие при прошлом рестарте in-flight джобы → честный error (не «висят»).
-    reconcile_orphaned_jobs(settings.db_path)
+    # Осиротевшие in-flight джобы → error, но ТОЛЬКО если gpu-воркер не жив (нет
+    # ready-флага): рестарт одного api при живом воркере не должен убивать
+    # выполняющуюся джобу. Живой воркер реконсилит сам на своём старте (tasks.py).
+    if not settings.ready_flag_path.exists():
+        reconcile_orphaned_jobs(settings.db_path)
 
     app = FastAPI(title="DialogScribe", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.settings = settings
@@ -117,6 +120,7 @@ def create_app(settings: Settings | None = None, enqueue=None) -> FastAPI:
     from .fs_api import router as fs_router
     from .galleries_api import router as galleries_router
     from .glossary_api import router as glossary_router
+    from .ingest_api import router as ingest_router
     from .jobs import router as jobs_router
     from .presets import router as presets_router
     from .recordings import router as recordings_router
@@ -127,6 +131,7 @@ def create_app(settings: Settings | None = None, enqueue=None) -> FastAPI:
     app.include_router(recordings_router)
     app.include_router(jobs_router)
     app.include_router(yandex_router)
+    app.include_router(ingest_router)
     app.include_router(fs_router)
     app.include_router(presets_router)
     app.include_router(glossary_router)

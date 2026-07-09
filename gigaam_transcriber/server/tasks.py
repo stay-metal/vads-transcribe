@@ -1,11 +1,12 @@
 """Точка входа Huey-воркеров: инстансы очередей `gpu_huey` / `io_huey` из окружения.
 
 Воркеры запускаются как (см. deploy/docker-compose.yml):
-    huey_consumer gigaam_transcriber.server.tasks.gpu_huey -k process -w 1   # GPU
+    python -m gigaam_transcriber.server.run_gpu_worker -k process -w 1        # GPU
     huey_consumer gigaam_transcriber.server.tasks.io_huey  -w 2              # I/O
 
-При старте gpu-воркера прогревается тёплый singleton (warm_up) и выставляется
-ready-флаг для /readyz. Прикладные задачи (ASR-джобы) добавятся в M3.
+gpu-очередь: тёплый singleton (warm_up) + ready-флаг для /readyz + реконсиль
+осиротевших джоб на старте; ASR-джоба — `run_job`. io-очередь: скачивание Я.Диска
+(`pull_recording`), сборка галерей, периодика (retention, авто-watch yandex/local).
 """
 
 from __future__ import annotations
@@ -33,9 +34,15 @@ def _warm_gpu_singleton() -> None:
     # Импорт тяжёлой библиотеки — только в gpu-воркере, на старте consumer.
     global WARM_TRANSCRIBER
     from .config import Settings
+    from .repository import reconcile_orphaned_jobs
     from .workers import warm_up
 
-    WARM_TRANSCRIBER = warm_up(Settings.from_env())
+    settings = Settings.from_env()
+    # Воркер только что стартовал → in-flight никого нет: осиротевшие стадии
+    # (прерванные прошлым рестартом воркера) честно в error. Api при живом воркере
+    # это НЕ делает (см. create_app) — реконсиль тут единственный достоверный.
+    reconcile_orphaned_jobs(settings.db_path)
+    WARM_TRANSCRIBER = warm_up(settings)
 
 
 @gpu_huey.task()
@@ -62,10 +69,14 @@ def prune_retention_task() -> None:
 def poll_yandex_task() -> None:
     """Авто-watch: периодический опрос watch_dir Я.Диска (io, без GPU).
 
-    lock_task — чтобы медленный проход не наслаивался на следующий. Клеймит
-    только устоявшиеся записи (окно стабильности), дедуп через ingest_seen."""
+    Крон — */5, но фактический интервал соблюдаем по `last_scan_at` + `poll_interval`
+    из настроек источника (как локальный поллер), чтобы кастомный интервал не
+    игнорировался. lock_task — чтобы медленный проход не наслаивался на следующий.
+    Клеймит только устоявшиеся записи (окно стабильности), дедуп через ingest_seen."""
+    from datetime import datetime, timezone
+
     from .config import Settings
-    from .repository import get_ingest_source
+    from .repository import get_ingest_source, set_ingest_last_scan
     from .yandex import build_client_from_settings, poll_ingest_sources
 
     settings = Settings.from_env()
@@ -75,9 +86,18 @@ def poll_yandex_task() -> None:
         return  # схема ещё не мигрирована (api не стартовал) — до следующего тика
     if not src or not src["enabled"]:
         return
+    last = src.get("last_scan_at")
+    if last:
+        try:
+            elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(last)).total_seconds()
+            if elapsed < max(60, int(src["poll_interval"])):
+                return
+        except ValueError:
+            pass
     client = build_client_from_settings(settings)
     if client is None:
         return
+    set_ingest_last_scan(settings.db_path, "yandex")
     poll_ingest_sources(settings, client, enqueue_io=lambda s, k, t: pull_recording(s, k, t))
 
 
@@ -117,21 +137,20 @@ def poll_local_task() -> None:
 def pull_recording(surrogate_id: str, kind: str, remote_tracks: list) -> str:
     """io-задача: скачать запись с Яндекс.Диска (без GPU) → enqueue gpu run_job."""
     from .config import Settings
-    from .crypto import decrypt
-    from .repository import get_yandex_auth
-    from .yandex import YaDiskClient, ingest_pull
+    from .yandex import build_client_from_settings, ingest_pull
 
     settings = Settings.from_env()
-    auth = get_yandex_auth(settings.db_path)
-    token = decrypt(settings.fernet_key, auth["token_enc"]) if auth else None
-    if not token:
+    # build_client_from_settings → _valid_access_token: истёкший access-токен
+    # обновляется по refresh (OAuth), иначе скачивание шло бы с протухшим токеном.
+    client = build_client_from_settings(settings)
+    if client is None:
         return surrogate_id
     ingest_pull(
         settings,
         surrogate_id,
         kind,
         remote_tracks,
-        YaDiskClient(token),
+        client,
         enqueue_gpu=lambda job_id: run_job(job_id),
     )
     return surrogate_id

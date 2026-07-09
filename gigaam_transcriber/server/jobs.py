@@ -41,6 +41,7 @@ from .repository import (
     set_speaker_edit,
     set_text_edit,
 )
+from .transcripts import load_result_with_overlay, render_body
 
 _FORMATS = ("md", "txt", "json", "srt", "vtt")
 
@@ -217,8 +218,8 @@ def list_all(
         states=_SCOPES.get(scope),
         date_from=_canon_date_bound(date_from) if date_from else None,
         date_to=_canon_date_bound(date_to) if date_to else None,
-        limit=max(1, min(int(limit), 200)),
-        offset=max(0, int(offset)),
+        limit=max(1, min(limit, 200)),
+        offset=max(0, offset),
     )
     positions = queued_positions(settings.db_path)
     payload = []
@@ -296,57 +297,29 @@ def cancel(job_id: str, request: Request, user: str = Depends(require_session)) 
     job = get_job(settings.db_path, job_id)
     if job is None:
         raise HTTPException(404, "Джоба не найдена")
-    # Cancel честно только для queued (running доходит до конца — спека §7).
+    # Cancel честно только для queued (спека §7). CAS достаточно: running-джобу не
+    # трогаем — huey-задача доотработает и запишет результат (revoke не заведён).
     if not cancel_job_if_queued(settings.db_path, job_id):
         raise HTTPException(409, "Отмена возможна только для джобы в очереди")
-    revoke = getattr(request.app.state, "revoke", None)
-    if revoke is not None and job["huey_task_id"]:
-        revoke(job["huey_task_id"])
     return {"job_id": job_id, "state": "canceled"}
 
 
 # --------------------------------------------------------------------------- #
 # result / speakers / download / audio
 # --------------------------------------------------------------------------- #
-def _load_result_with_overlay(job: dict, edits: dict, text_edits: dict | None = None) -> dict:
-    """Загрузить result.json и наложить speaker/text-edits (без мутации файла).
-
-    Правки хранятся отдельными оверлеями (`speaker_edits`/`text_edits`) и
-    применяются на чтении/скачивании/экспорте — сам result.json неизменен (I1)."""
-    path = job.get("result_json_path")
-    if not path or not Path(path).exists():
-        raise HTTPException(409, "Результат ещё не готов")
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-    text_edits = text_edits or {}
-    for i, seg in enumerate(data.get("segments", [])):
-        spk = seg.get("speaker")
-        # стабильный сырой ярлык — ключ правки (чтобы повторное переименование не терялось)
-        seg["original_speaker"] = spk
-        if spk in edits:
-            seg["speaker"] = edits[spk]
-            seg["provenance"] = "human"
-        if i in text_edits:
-            seg["original_text"] = seg.get("text")
-            seg["text"] = text_edits[i]
-            seg["provenance"] = "human"
-    meta = data.get("metadata")
-    if isinstance(meta, dict):
-        # не отдаём клиенту серверные пути источника
-        meta.pop("source", None)
-        # пересчёт после наложения: speakers_count = число фактических меток
-        distinct = {s.get("speaker") for s in data.get("segments", []) if s.get("speaker")}
-        meta["speakers_count"] = len(distinct)
-    if text_edits:
-        data["full_text"] = " ".join(s.get("text", "") for s in data.get("segments", []))
-    return data
-
-
 def _overlay_for(settings, job: dict) -> dict:
-    return _load_result_with_overlay(
+    """result.json с наложенными правками; 409, если результат ещё не готов.
+
+    Чистая логика оверлея/рендера — в server/transcripts.py (юнит-тестируема
+    без HTTP); здесь только HTTP-детали."""
+    data = load_result_with_overlay(
         job,
         get_speaker_edits(settings.db_path, job["id"]),
         get_text_edits(settings.db_path, job["id"]),
     )
+    if data is None:
+        raise HTTPException(409, "Результат ещё не готов")
+    return data
 
 
 @router.get("/api/jobs/{job_id}/result")
@@ -366,10 +339,15 @@ def put_speakers(
     job = get_job(settings.db_path, job_id)
     if job is None:
         raise HTTPException(404, "Джоба не найдена")
+    # Сначала валидируем ВЕСЬ payload, потом пишем: иначе частично-невалидная
+    # партия оставила бы первые правки применёнными, а хвост — отклонённым.
+    cleaned = {}
     for original, new in payload.edits.items():
         if not str(new).strip():
             raise HTTPException(400, "Пустое имя спикера")
-        set_speaker_edit(settings.db_path, job_id, original, str(new).strip())
+        cleaned[original] = str(new).strip()
+    for original, new in cleaned.items():
+        set_speaker_edit(settings.db_path, job_id, original, new)
     return {"job_id": job_id, "edits": get_speaker_edits(settings.db_path, job_id)}
 
 
@@ -429,7 +407,7 @@ def download(
         return FileResponse(fpath, media_type=media_type, filename=fname)
 
     data = _overlay_for(settings, job)
-    body, media_type = _render_body(data, format)
+    body, media_type = render_body(data, format)
     headers = {"Content-Disposition": f'attachment; filename="transcript.{format}"'}
     return Response(content=body, media_type=media_type, headers=headers)
 
@@ -451,7 +429,7 @@ def write_transcript(
     if fmt not in _FORMATS:
         raise HTTPException(400, "Формат: md|txt|json|srt|vtt")
     data = _overlay_for(settings, job)
-    body, _ = _render_body(data, fmt)
+    body, _ = render_body(data, fmt)
     dest = Path(out_dir) / f"transcript.{fmt}"
     dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(body, encoding="utf-8")
@@ -473,69 +451,3 @@ def put_settings(
     settings = request.app.state.settings
     set_meta(settings.db_path, "transcript_format", payload.transcript_format)
     return {"transcript_format": payload.transcript_format}
-
-
-def _format_ts(sec: float) -> str:
-    s = int(sec)
-    h, m, ss = s // 3600, (s % 3600) // 60, s % 60
-    return f"{h}:{m:02d}:{ss:02d}" if h else f"{m}:{ss:02d}"
-
-
-def _render_md(data: dict) -> str:
-    """Markdown-протокол созвона: заголовок + реплики «**Спикер** · `тайм`»."""
-    meta = data.get("metadata", {}) or {}
-    segs = data.get("segments", [])
-    lines: list[str] = ["# Транскрипт", ""]
-    bits: list[str] = []
-    if meta.get("duration"):
-        bits.append(_format_ts(float(meta["duration"])))
-    if meta.get("model"):
-        bits.append(str(meta["model"]))
-    bits.append(f"{len(segs)} реплик")
-    lines += ["_" + " · ".join(bits) + "_", ""]
-    for s in segs:
-        ts = _format_ts(float(s.get("start", 0.0)))
-        spk = s.get("speaker")
-        lines.append(f"**{spk}** · `{ts}`" if spk else f"`{ts}`")
-        lines.append("")
-        lines.append((s.get("text", "") or "").strip())
-        lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def _render_body(data: dict, fmt: str) -> tuple[str, str]:
-    """(тело, media_type) для формата экспорта/скачивания."""
-    if fmt == "json":
-        return json.dumps(data, ensure_ascii=False, indent=2), "application/json"
-    if fmt == "md":
-        return _render_md(data), "text/markdown; charset=utf-8"
-    return _render(data, fmt), "text/plain; charset=utf-8"
-
-
-def _render(data: dict, fmt: str) -> str:
-    """Рендер txt/srt/vtt из overlay-данных через библиотечный TranscriptionResult."""
-    from gigaam_transcriber.data_models import TranscriptionResult, TranscriptionSegment
-
-    segs = [
-        TranscriptionSegment(
-            text=s.get("text", ""),
-            start=float(s.get("start", 0.0)),
-            end=float(s.get("end", 0.0)),
-            speaker=s.get("speaker"),
-        )
-        for s in data.get("segments", [])
-    ]
-    meta = data.get("metadata", {})
-    result = TranscriptionResult(
-        text=data.get("full_text", " ".join(s.text for s in segs)),
-        segments=segs,
-        duration=float(meta.get("duration", 0.0) or 0.0),
-        language=meta.get("language", "ru"),
-        model_name=meta.get("model", meta.get("model_name", "")),
-        processing_time=0.0,
-    )
-    if fmt == "txt":
-        return result.to_txt()
-    if fmt == "srt":
-        return result.to_srt()
-    return result.to_vtt()

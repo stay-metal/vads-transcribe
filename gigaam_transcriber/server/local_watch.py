@@ -26,20 +26,15 @@ from pathlib import Path
 
 from . import media
 from .config import Settings
+from .ingest_common import STABILITY_THRESHOLD, register_job
 from .repository import (
     claim_ingest,
-    create_job,
-    create_recording,
     get_ingest_source,
     new_id,
     reclaim_ingest_if_job_failed,
     record_stability,
-    set_job_dirs,
-    set_job_duration,
-    set_recording_latest_job,
     update_ingest,
 )
-from .yandex import STABILITY_THRESHOLD
 from .zoom_scan import (
     DEFAULT_PROFILE,
     Meeting,
@@ -127,7 +122,6 @@ def validate_output_profile(settings: Settings, watch_dir: str, profile: ScanPro
 class _Unit:
     """Единица обработки после применения track_mode: одна будущая джоба."""
 
-    key: str  # ключ дедупа
     kind: str  # route_a | single
     tracks: list[dict]
     title: str
@@ -158,7 +152,6 @@ def _units_for_part(meeting: Meeting, part: MeetingPart, profile: ScanProfile) -
     ВСЕ режимы делят один ключ дедупа `local:<magic>#p<N>` — переключение
     режима не пере-ингестит уже обработанные встречи (обещание докстринга и UI).
     separate создаёт несколько джоб под ОДНИМ claim."""
-    base_key = f"local:{meeting.magic}#p{part.index}"
     base_out = _base_output_dir(meeting, part.index, profile)
     title = _part_title(meeting, part.index)
 
@@ -168,7 +161,7 @@ def _units_for_part(meeting: Meeting, part: MeetingPart, profile: ScanProfile) -
     if mode == "mix_only" and part.mix_path:
         mix = Path(part.mix_path)
         track = {"name": title, "path": str(mix), "size": mix.stat().st_size}
-        return [_Unit(key=base_key, kind="single", tracks=[track], title=title, out_dir=base_out)]
+        return [_Unit(kind="single", tracks=[track], title=title, out_dir=base_out)]
     # mix_only без микса деградирует до combine (лучше транскрибировать, чем молчать).
 
     if mode == "separate" and has_participants:
@@ -176,7 +169,6 @@ def _units_for_part(meeting: Meeting, part: MeetingPart, profile: ScanProfile) -
         for t in part.tracks:
             units.append(
                 _Unit(
-                    key=base_key,
                     kind="single",
                     tracks=[t],
                     title=f"{title} — {t['name']}",
@@ -187,7 +179,7 @@ def _units_for_part(meeting: Meeting, part: MeetingPart, profile: ScanProfile) -
         return units
 
     # combine (дефолт): route_a при подорожках, иначе single-микс.
-    return [_Unit(key=base_key, kind=part.kind, tracks=part.tracks, title=title, out_dir=base_out)]
+    return [_Unit(kind=part.kind, tracks=part.tracks, title=title, out_dir=base_out)]
 
 
 def _part_duration(part: MeetingPart) -> float:
@@ -238,33 +230,24 @@ def _build_merged_tracks(
 def _create_job_for_unit(
     settings: Settings, unit: _Unit, default_params: dict, enqueue_gpu, work_dir: str
 ) -> str:
-    """Общий хвост ingestion-а: recording → job → dirs → enqueue."""
-    db = settings.db_path
-    rec_id = create_recording(
-        db, origin="local", kind=unit.kind, tracks=unit.tracks, title=unit.title
-    )
+    """Общий хвост ingestion-а: recording → job → dirs → enqueue (см. register_job)."""
     params: dict = {"glossary": True, "emit_l0": True, **default_params}
     if unit.kind == "single":
         if unit.force_no_diarization:
             params["diarization"] = "none"
         else:
             params.setdefault("diarization", "pyannote" if os.getenv("HF_TOKEN") else "none")
-    job_id = create_job(db, mode=unit.kind, source="local", recording_id=rec_id, params=params)
-    if unit.tracks:
-        # Длительность аудио — заранее (ETA в UI); дорожки части равной длины.
-        dur = media.probe_duration(Path(unit.tracks[0]["path"]))
-        if dur:
-            set_job_duration(db, job_id, dur)
-    set_job_dirs(
-        db,
-        job_id,
+    _rec_id, job_id = register_job(
+        settings,
+        origin="local",
+        kind=unit.kind,
+        tracks=unit.tracks,
+        title=unit.title,
+        params=params,
+        output_dir=unit.out_dir,
         work_dir=work_dir,
-        output_dir=str(unit.out_dir),
-        manifest_path=str(unit.out_dir / "manifest.json"),
+        enqueue_gpu=enqueue_gpu,
     )
-    set_recording_latest_job(db, rec_id, job_id)
-    if enqueue_gpu is not None:
-        enqueue_gpu(job_id)
     return job_id
 
 
@@ -295,10 +278,11 @@ def ingest_meeting(
     claimed: list[tuple[MeetingPart, str]] = []
     for part in meeting.parts:
         key = f"local:{meeting.magic}#p{part.index}"
-        surrogate = claim_ingest(db, key, None)
+        surrogate = claim_ingest(db, key, None, allow_reclaim=allow_reclaim)
         if surrogate is None:
-            # Терминальный claim: дедуп. Ручной скан может переклеймить упавшую
-            # джобу (файл могли починить/дозалить).
+            # Терминальный `downloaded` claim: дедуп. Ручной скан может переклеймить
+            # упавшую джобу (файл могли починить/дозалить); упавшую склейку (`error`)
+            # уже переклеймил claim_ingest выше при allow_reclaim.
             surrogate = reclaim_ingest_if_job_failed(db, key) if allow_reclaim else None
         if surrogate is not None:
             claimed.append((part, surrogate))
@@ -324,7 +308,6 @@ def ingest_meeting(
                 update_ingest(db, surrogate, status="error")
             return []
         unit = _Unit(
-            key=f"local:{meeting.magic}#p1",
             kind=kind,
             tracks=tracks,
             title=meeting.title,
@@ -356,22 +339,27 @@ def ingest_meeting(
 def _probe_stable(folder: Path, profile: ScanProfile, delay: float = 1.0) -> str | None:
     """Двойная проба сигнатуры для force-скана: ловит файл, растущий под
     финальным именем (cp/Finder — без .tmp-маркеров). Возвращает сигнатуру
-    только если она не изменилась между двумя чтениями."""
+    только если она не изменилась между двумя чтениями. `delay=0` (HTTP-скан) —
+    без ожидания: не блокируем запрос, стабильность даёт окно между сканами."""
     first = folder_signature(folder, profile)
     if first is None:
         return None
-    time.sleep(delay)
+    if delay > 0:
+        time.sleep(delay)
     second = folder_signature(folder, profile)
     return second if second == first else None
 
 
-def poll_local_source(settings: Settings, enqueue_gpu, force: bool = False) -> list[dict]:
+def poll_local_source(
+    settings: Settings, enqueue_gpu, force: bool = False, wait_stable: bool = True
+) -> list[dict]:
     """Один проход по watch_dir: стабильные папки встреч → ingest_meeting.
 
     Идемпотентно: дедуп по `local:<magic>#p<N>` в ingest_seen, окно стабильности
     (`record_stability`) пережидает rsync/конвертацию. Ошибки одной папки не
     роняют проход. `force` — ручной скан из UI работает и при выключенном
-    авто-тумблере; вместо окна стабильности — немедленная двойная проба."""
+    авто-тумблере; вместо окна стабильности — немедленная двойная проба.
+    `wait_stable=False` (HTTP-скан) — проба без sleep, чтобы не спать в запросе."""
     src = get_ingest_source(settings.db_path, "local")
     if not src or (not src["enabled"] and not force):
         return []
@@ -396,7 +384,8 @@ def poll_local_source(settings: Settings, enqueue_gpu, force: bool = False) -> l
             if stable < STABILITY_THRESHOLD:
                 # Ручной скан (force) не ждёт окна, но защищается двойной
                 # пробой — файл, растущий под финальным именем, не клеймим.
-                if not (force and _probe_stable(entry, profile) == sig):
+                probe_delay = 1.0 if wait_stable else 0.0
+                if not (force and _probe_stable(entry, profile, probe_delay) == sig):
                     continue
             meeting = scan_meeting(entry, profile)
             if meeting is None:

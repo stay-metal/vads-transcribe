@@ -1,4 +1,5 @@
-"""Слой app.sqlite (WAL). В M2 — только `meta` (session-epoch); jobs/recordings — M3.
+"""Слой app.sqlite (WAL): схема (recordings/jobs/speaker_edits/ingest_*/…), лёгкие
+миграции (ADD COLUMN, пересборка `ingest_sources`) и session-epoch.
 
 Очередь Huey живёт в отдельной БД (huey.sqlite), чтобы запись задач не конфликтовала
 с прикладными записями под конкуренцией (спека §13, риск SQLite-lock).

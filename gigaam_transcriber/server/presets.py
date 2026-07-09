@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -40,6 +41,18 @@ class ScanProfileIn(BaseModel):
     )
     skip_dirs: list[str] = Field(default_factory=lambda: ["transcripts", "done"])
     output: OutputIn = Field(default_factory=OutputIn)
+
+    @field_validator("tracks_subdir")
+    @classmethod
+    def _safe_subdir(cls, v: str | None) -> str | None:
+        # tracks_subdir джойнится к папке встречи (`folder / tracks_subdir`):
+        # абсолютный путь или «..» вырвались бы наружу (traversal-чтение ФС).
+        if v is None:
+            return v
+        p = Path(v)
+        if p.is_absolute() or ".." in p.parts:
+            raise ValueError("tracks_subdir: относительный путь без «..»")
+        return v
 
     @field_validator("media_suffixes")
     @classmethod

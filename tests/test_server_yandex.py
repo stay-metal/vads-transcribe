@@ -18,6 +18,17 @@ PASSWORD = "correct-horse-battery-staple"
 VALID = "valid-token"
 
 
+def _ingest_status(db_path, surrogate_id):
+    """Статус ingest-claim по surrogate_id (прямой SQL вместо repo.get_ingest)."""
+    from gigaam_transcriber.server.db import get_conn
+
+    with get_conn(db_path) as conn:
+        row = conn.execute(
+            "SELECT status FROM ingest_seen WHERE surrogate_id=?", (surrogate_id,)
+        ).fetchone()
+    return row["status"] if row else None
+
+
 class FakeYandex:
     def __init__(self, token):
         self.token = token
@@ -122,7 +133,8 @@ class FakeYandex:
         ]
 
     def download(self, remote, local):
-        Path(local).write_bytes(b"\x00\x00")
+        # Валидная mp4/m4a-сигнатура (ftyp@4): ingest_pull проверяет magic-bytes.
+        Path(local).write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 16)
 
 
 class FakeTranscriber:
@@ -404,7 +416,7 @@ def test_single_pull_produces_done_job(tmp_path):
 
 def test_failed_download_releases_claim_for_repull(tmp_path):
     from gigaam_transcriber.server.db import init_db
-    from gigaam_transcriber.server.repository import claim_ingest, get_ingest
+    from gigaam_transcriber.server.repository import claim_ingest
     from gigaam_transcriber.server.yandex import ingest_pull
 
     settings = _settings(tmp_path)
@@ -420,16 +432,18 @@ def test_failed_download_releases_claim_for_repull(tmp_path):
     assert sur is not None
     tracks = [{"name": "Алиса", "remote": "/Записи/meeting/Алиса.m4a"}]
     assert ingest_pull(settings, sur, "route_a", tracks, Failing(), enqueue_gpu=None) is None
-    assert get_ingest(settings.db_path, sur)["status"] == "error"
+    assert _ingest_status(settings.db_path, sur) == "error"
 
-    # повторный claim той же ревизии — НЕ дедуплицируется (была ошибка) → переклейм
-    sur2 = claim_ingest(settings.db_path, key, "rd")
+    # авто-поллер (без allow_reclaim) НЕ пережёвывает упавший claim каждый тик
+    assert claim_ingest(settings.db_path, key, "rd") is None
+    # ручной re-pull (allow_reclaim) той же ревизии переклеймивает error → re-pull
+    sur2 = claim_ingest(settings.db_path, key, "rd", allow_reclaim=True)
     assert sur2 is not None  # re-pull возможен (не «already_seen» навсегда)
 
     # успешное скачивание → запись/джоба создаются
     job = ingest_pull(settings, sur2, "route_a", tracks, FakeYandex(VALID), enqueue_gpu=None)
     assert job is not None
-    assert get_ingest(settings.db_path, sur2)["status"] == "downloaded"
+    assert _ingest_status(settings.db_path, sur2) == "downloaded"
 
 
 def test_downloaded_claim_is_not_reclaimed(tmp_path):
@@ -441,6 +455,69 @@ def test_downloaded_claim_is_not_reclaimed(tmp_path):
     sur = claim_ingest(settings.db_path, "/x:1", None)
     update_ingest(settings.db_path, sur, status="downloaded")
     assert claim_ingest(settings.db_path, "/x:1", None) is None  # дедуп держится
+
+
+@pytest.mark.parametrize("status", ["claimed", "downloading"])
+def test_active_claim_is_not_reclaimed(tmp_path, status):
+    # Загрузка идёт прямо сейчас: повторный клейм породил бы второе скачивание
+    # и дубль-джобу — даже ручной pull (allow_reclaim) не трогает активную.
+    from gigaam_transcriber.server.db import init_db
+    from gigaam_transcriber.server.repository import claim_ingest, update_ingest
+
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    sur = claim_ingest(settings.db_path, "/x:1", None)
+    update_ingest(settings.db_path, sur, status=status)
+    assert claim_ingest(settings.db_path, "/x:1", None) is None
+    assert claim_ingest(settings.db_path, "/x:1", None, allow_reclaim=True) is None
+
+
+def test_error_claim_reclaimed_only_with_permission(tmp_path):
+    from gigaam_transcriber.server.db import init_db
+    from gigaam_transcriber.server.repository import claim_ingest, update_ingest
+
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    sur = claim_ingest(settings.db_path, "/x:1", None)
+    update_ingest(settings.db_path, sur, status="error")
+    assert claim_ingest(settings.db_path, "/x:1", None) is None  # авто-поллер не ретраит
+    assert claim_ingest(settings.db_path, "/x:1", None, allow_reclaim=True) == sur
+
+
+def test_single_file_bad_extension_rejected(tmp_path):
+    # Ручной pull одиночного файла с не-аудио расширением → 415 ДО клейма.
+    from gigaam_transcriber.server.yandex import IngestError, ingest_path
+
+    _, settings = _make(tmp_path)
+
+    class Meta:
+        def get_meta(self, path):
+            return {"name": "notes.txt", "path": path, "type": "file", "revision": 1}
+
+    with pytest.raises(IngestError) as ei:
+        ingest_path(settings, Meta(), "/Записи/notes.txt", None)
+    assert ei.value.status == 415
+
+
+def test_downloaded_bad_magic_bytes_fails_without_job(tmp_path):
+    # Скачанное оказалось не медиа (HTML-заглушка): ingest → error, файл удалён,
+    # запись/джоба НЕ создаются.
+    from gigaam_transcriber.server.db import init_db
+    from gigaam_transcriber.server.repository import claim_ingest
+    from gigaam_transcriber.server.yandex import ingest_pull
+
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+
+    class HtmlStub:
+        def download(self, remote, local):
+            Path(local).write_bytes(b"<html>not media</html>")
+
+    sur = claim_ingest(settings.db_path, "/Записи/mix.mp3:7", "r")
+    tracks = [{"name": "mix", "remote": "/Записи/mix.mp3"}]
+    assert ingest_pull(settings, sur, "single", tracks, HtmlStub(), enqueue_gpu=None) is None
+    assert _ingest_status(settings.db_path, sur) == "error"
+    assert not (Path(settings.data_dir) / "uploads" / sur).exists()  # частичное удалено
 
 
 def test_browse_respects_watch_dir(tmp_path, monkeypatch):
@@ -648,3 +725,48 @@ def test_oauth_refresh_on_expiry(tmp_path, monkeypatch):
         yandex, "_token_request", lambda data: {"access_token": "NEW", "expires_in": 3600}
     )
     assert yandex._valid_access_token(settings) == "NEW"  # refresh сработал
+
+
+def test_build_client_refreshes_expired_token(tmp_path, monkeypatch):
+    # pull_recording ходит через build_client_from_settings → истёкший access
+    # обновляется по refresh (иначе скачивание шло бы с протухшим токеном).
+    _oauth_env(monkeypatch)
+    _, settings = _make(tmp_path)
+    from datetime import datetime, timedelta, timezone
+
+    from gigaam_transcriber.server import yandex
+    from gigaam_transcriber.server.repository import set_yandex_token
+
+    past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    set_yandex_token(
+        settings.db_path,
+        crypto.encrypt(settings.fernet_key, "OLD"),
+        check_ok=True,
+        refresh_token_enc=crypto.encrypt(settings.fernet_key, "RT"),
+        expires_at=past,
+    )
+    monkeypatch.setattr(
+        yandex, "_token_request", lambda data: {"access_token": "NEW", "expires_in": 3600}
+    )
+    client = yandex.build_client_from_settings(settings, factory=lambda tok: tok)
+    assert client == "NEW"
+
+
+def test_expired_token_without_refresh_needs_reauth(tmp_path):
+    # Истёк, refresh недоступен (нет OAuth-config/refresh) → browse 401, status reason.
+    from datetime import datetime, timedelta, timezone
+
+    from gigaam_transcriber.server.repository import set_yandex_token
+
+    c, settings = _make(tmp_path)
+    past = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    set_yandex_token(
+        settings.db_path,
+        crypto.encrypt(settings.fernet_key, "OLD"),
+        check_ok=True,
+        expires_at=past,
+    )
+    assert c.get("/api/yandex/browse", params={"path": "/x"}).status_code == 401
+    st = c.get("/api/yandex/status").json()
+    assert st["connected"] is True and st["check_ok"] is False
+    assert "переавтор" in st["reason"].lower()

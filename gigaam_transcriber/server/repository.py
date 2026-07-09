@@ -15,20 +15,6 @@ from typing import Any
 
 from .db import get_conn
 
-# Состояния джобы (спека §7).
-JOB_STATES = (
-    "queued",
-    "preclean",
-    "vad",
-    "diarization",
-    "asr",
-    "quality",
-    "formatting",
-    "done",
-    "error",
-    "canceled",
-)
-
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -40,6 +26,14 @@ def new_id() -> str:
 
 def _row_to_dict(row) -> dict | None:
     return dict(row) if row is not None else None
+
+
+def _job_from_row(row: sqlite3.Row) -> dict:
+    """Строка jobs → dict с распакованным params_json и bool device_fallback."""
+    job = dict(row)
+    job["params"] = json.loads(job.pop("params_json") or "{}")
+    job["device_fallback"] = bool(job["device_fallback"])
+    return job
 
 
 # --------------------------------------------------------------------------- #
@@ -136,25 +130,7 @@ def create_job(
 def get_job(db_path: Path, job_id: str) -> dict | None:
     with get_conn(db_path) as conn:
         row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
-    job = _row_to_dict(row)
-    if job is not None:
-        job["params"] = json.loads(job.pop("params_json") or "{}")
-        job["device_fallback"] = bool(job["device_fallback"])
-    return job
-
-
-def list_jobs(db_path: Path, limit: int = 100) -> list[dict]:
-    with get_conn(db_path) as conn:
-        rows = conn.execute(
-            "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
-        ).fetchall()
-    out = []
-    for row in rows:
-        job = dict(row)
-        job["params"] = json.loads(job.pop("params_json") or "{}")
-        job["device_fallback"] = bool(job["device_fallback"])
-        out.append(job)
-    return out
+    return _job_from_row(row) if row is not None else None
 
 
 def list_jobs_page(
@@ -197,15 +173,9 @@ def list_jobs_page(
         rows = conn.execute(
             f"SELECT j.*, r.title AS title, r.track_count AS track_count {base} "
             "ORDER BY j.created_at DESC LIMIT ? OFFSET ?",
-            [*params, int(limit), int(offset)],
+            [*params, limit, offset],
         ).fetchall()
-    out = []
-    for row in rows:
-        job = dict(row)
-        job["params"] = json.loads(job.pop("params_json") or "{}")
-        job["device_fallback"] = bool(job["device_fallback"])
-        out.append(job)
-    return out, int(total)
+    return [_job_from_row(row) for row in rows], int(total)
 
 
 def jobs_state_counts(db_path: Path) -> dict[str, int]:
@@ -220,7 +190,7 @@ def done_duration_total(db_path: Path) -> float:
         row = conn.execute(
             "SELECT COALESCE(SUM(duration_sec), 0) FROM jobs WHERE state='done'"
         ).fetchone()
-    return float(row[0] or 0)
+    return float(row[0])  # COALESCE гарантирует не-NULL
 
 
 def avg_recent_rtf(db_path: Path, n: int = 10) -> float | None:
@@ -277,9 +247,6 @@ def set_job_dirs(
         )
 
 
-_TERMINAL = ("done", "error", "canceled")
-
-
 def claim_job(db_path: Path, job_id: str) -> bool:
     """Атомарно захватить queued-джобу (queued→asr). Возвращает True победителю.
 
@@ -289,7 +256,7 @@ def claim_job(db_path: Path, job_id: str) -> bool:
     """
     with get_conn(db_path) as conn:
         cur = conn.execute(
-            "UPDATE jobs SET state='asr', stage_pct=45, started_at=COALESCE(started_at, ?) "
+            "UPDATE jobs SET state='asr', stage_pct=30, started_at=COALESCE(started_at, ?) "
             "WHERE id=? AND state='queued'",
             (_now(), job_id),
         )
@@ -453,21 +420,15 @@ def set_yandex_token(
 def update_yandex_access(
     db_path: Path, token_enc: str, expires_at: str, refresh_token_enc: str | None = None
 ) -> None:
-    """Обновить access-токен (и опц. refresh) после refresh_token-обмена — не трогая
-    прочие поля, если refresh не менялся."""
+    """Обновить access-токен (и опц. refresh) после refresh_token-обмена. `None`
+    для refresh → COALESCE сохраняет прежний (refresh не менялся)."""
     with get_conn(db_path) as conn:
-        if refresh_token_enc is not None:
-            conn.execute(
-                "UPDATE yandex_auth SET token_enc=?, refresh_token_enc=?, expires_at=?, "
-                "check_ok=1, updated_at=? WHERE id=1",
-                (token_enc, refresh_token_enc, expires_at, _now()),
-            )
-        else:
-            conn.execute(
-                "UPDATE yandex_auth SET token_enc=?, expires_at=?, check_ok=1, updated_at=? "
-                "WHERE id=1",
-                (token_enc, expires_at, _now()),
-            )
+        conn.execute(
+            "UPDATE yandex_auth SET token_enc=?, "
+            "refresh_token_enc=COALESCE(?, refresh_token_enc), expires_at=?, check_ok=1, "
+            "updated_at=? WHERE id=1",
+            (token_enc, refresh_token_enc, expires_at, _now()),
+        )
 
 
 def get_yandex_auth(db_path: Path) -> dict | None:
@@ -479,12 +440,20 @@ def get_yandex_auth(db_path: Path) -> dict | None:
     return auth
 
 
-def claim_ingest(db_path: Path, key: str, resource_id: str | None) -> str | None:
+def claim_ingest(
+    db_path: Path, key: str, resource_id: str | None, *, allow_reclaim: bool = False
+) -> str | None:
     """Claim по `path:revision`. Возвращает surrogate_id для обработки, иначе None.
 
-    Первый раз → новый surrogate. Если строка уже есть: терминальную
-    (downloaded/done) НЕ переклеймиваем (дедуп — без второй джобы), а застрявшую
-    (claimed/downloading/error после сбоя/краха) ПЕРЕклеймиваем → re-pull восстановим.
+    Первый раз → новый surrogate. Если строка уже есть:
+    - терминальную (`downloaded`/`done`) НЕ переклеймиваем (дедуп — без второй джобы);
+    - активную (`claimed`/`downloading`) НЕ переклеймиваем: загрузка идёт прямо
+      сейчас — повторный клейм породил бы второе скачивание и дубль-джобу
+      (крах воркера всё равно переведёт claim в `error` через except-ветку);
+    - `error` (упавшая загрузка/склейка) переклеймиваем ТОЛЬКО при `allow_reclaim`
+      (ручной pull/скан): авто-поллер иначе пережёвывал бы битый файл каждый тик.
+    Переклейм `error` — CAS `WHERE status='error'` (гонка ручного с кроном →
+    переклеймит ровно один).
     """
     surrogate = new_id()
     with get_conn(db_path) as conn:
@@ -500,11 +469,13 @@ def claim_ingest(db_path: Path, key: str, resource_id: str | None) -> str | None
         ).fetchone()
         if row is None:  # маловероятная гонка
             return None
-        if row["status"] in ("downloaded", "done"):
-            return None  # действительно уже обработано
-        # не-терминальная (сбой/краш) → переклеймить тем же surrogate
-        conn.execute("UPDATE ingest_seen SET status='claimed' WHERE key=?", (key,))
-        return row["surrogate_id"]
+        if row["status"] == "error" and allow_reclaim:
+            reclaimed = conn.execute(
+                "UPDATE ingest_seen SET status='claimed' WHERE key=? AND status='error'",
+                (key,),
+            )
+            return row["surrogate_id"] if reclaimed.rowcount > 0 else None
+        return None  # терминальная/активная/error-без-разрешения — без второй задачи
 
 
 def reclaim_ingest_if_job_failed(db_path: Path, key: str) -> str | None:
@@ -525,14 +496,6 @@ def reclaim_ingest_if_job_failed(db_path: Path, key: str) -> str | None:
             return None
         row = conn.execute("SELECT surrogate_id FROM ingest_seen WHERE key=?", (key,)).fetchone()
         return row["surrogate_id"] if row else None
-
-
-def get_ingest(db_path: Path, surrogate_id: str) -> dict | None:
-    with get_conn(db_path) as conn:
-        row = conn.execute(
-            "SELECT * FROM ingest_seen WHERE surrogate_id=?", (surrogate_id,)
-        ).fetchone()
-    return _row_to_dict(row)
 
 
 def update_ingest(

@@ -9,50 +9,10 @@ import io
 import pytest
 from fastapi.testclient import TestClient
 
-from gigaam_transcriber.data_models import TranscriptionResult, TranscriptionSegment
 from gigaam_transcriber.server import media
 from gigaam_transcriber.server.app import create_app
-from gigaam_transcriber.server.config import Settings
 from gigaam_transcriber.server.job_runner import process_job
-from gigaam_transcriber.server.security import hash_password
-
-PASSWORD = "correct-horse-battery-staple"
-WAV = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 32
-
-
-class FakeTranscriber:
-    def transcribe_route_a(
-        self, tracks, glossary=True, min_segment_gap=0.5, progress_callback=None, **kwargs
-    ):
-        names = list(tracks)
-        if progress_callback:
-            for i, n in enumerate(names, 1):
-                progress_callback(i, len(names), n)
-        segs = [
-            TranscriptionSegment(text=f"реплика {n}", start=float(i), end=float(i) + 1, speaker=n)
-            for i, n in enumerate(names)
-        ]
-        return TranscriptionResult(
-            text=" ".join(s.text for s in segs),
-            segments=segs,
-            duration=10.0,
-            language="ru",
-            model_name="fake",
-            processing_time=1.0,
-            metadata={"route": "A", "tracks": names},
-        )
-
-    def transcribe(self, input_path, diarization="pyannote", **kw):
-        segs = [TranscriptionSegment(text="привет", start=0.0, end=1.0, speaker="SPEAKER_00")]
-        return TranscriptionResult(
-            text="привет",
-            segments=segs,
-            duration=5.0,
-            language="ru",
-            model_name="fake",
-            processing_time=0.5,
-            metadata={},
-        )
+from tests.conftest import WAV, FakeTranscriber, login_client, server_settings
 
 
 @pytest.fixture(autouse=True)
@@ -70,17 +30,7 @@ def _no_real_ffmpeg(monkeypatch, tmp_path):
 
 
 def _settings(tmp_path, **over):
-    base = {
-        "user": "admin",
-        "password_hash": hash_password(PASSWORD),
-        "session_key": "session-key-aaaaaaaaaaaaaaaa",
-        "fernet_key": "fernet-key-bbbbbbbbbbbbbbbb",
-        "data_dir": tmp_path,
-        "cookie_secure": False,
-        "require_https": False,
-    }
-    base.update(over)
-    return Settings(**base)
+    return server_settings(tmp_path, **over)
 
 
 def _make(tmp_path, sync=True):
@@ -92,9 +42,7 @@ def _make(tmp_path, sync=True):
             process_job(settings, job_id, transcriber)
         return "task-" + job_id
 
-    client = TestClient(create_app(settings, enqueue=enqueue))
-    client.post("/api/auth/login", data={"username": "admin", "password": PASSWORD})
-    return client
+    return login_client(create_app(settings, enqueue=enqueue))
 
 
 def _file(name, data=WAV):
@@ -184,6 +132,36 @@ def test_cancel_only_queued(tmp_path):
     assert c.get(f"/api/jobs/{job_id}").json()["state"] == "canceled"
     # повторная отмена уже не queued → 409
     assert c.post(f"/api/jobs/{job_id}/cancel").status_code == 409
+
+
+def test_api_restart_with_live_worker_keeps_running_job(tmp_path):
+    # Рестарт api при живом gpu-воркере (есть ready-флаг) НЕ убивает 'asr'-джобу.
+    from gigaam_transcriber.server import repository as repo
+    from gigaam_transcriber.server.db import init_db
+
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    job_id = repo.create_job(settings.db_path, mode="single", source="upload")
+    repo.claim_job(settings.db_path, job_id)  # queued→asr
+    settings.ready_flag_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.ready_flag_path.write_text("ready")
+    create_app(settings)
+    assert repo.get_job(settings.db_path, job_id)["state"] == "asr"
+
+
+def test_api_restart_without_worker_reconciles_orphan(tmp_path):
+    # Нет ready-флага (воркер мёртв) → осиротевшая in-flight джоба честно в error.
+    from gigaam_transcriber.server import repository as repo
+    from gigaam_transcriber.server.db import init_db
+
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    job_id = repo.create_job(settings.db_path, mode="single", source="upload")
+    repo.claim_job(settings.db_path, job_id)
+    settings.ready_flag_path.unlink(missing_ok=True)
+    create_app(settings)
+    job = repo.get_job(settings.db_path, job_id)
+    assert job["state"] == "error" and job["error_code"] == "worker_restart"
 
 
 def test_jobs_require_auth(tmp_path):

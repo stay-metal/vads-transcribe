@@ -93,6 +93,12 @@ class ScanProfile:
             isinstance(tracks_subdir, str) and tracks_subdir.strip()
         ):
             tracks_subdir = None
+        # Defense-in-depth: даже если traversal-значение просочилось в БД мимо
+        # pydantic-валидации, не джойним абсолютный путь/«..» к папке встречи.
+        if isinstance(tracks_subdir, str):
+            sub = Path(tracks_subdir)
+            if sub.is_absolute() or ".." in sub.parts:
+                tracks_subdir = None
         layout = _s(raw.get("layout"), cls.layout)
         track_mode = _s(raw.get("track_mode"), cls.track_mode)
         parts_mode = _s(raw.get("parts_mode"), cls.parts_mode)
@@ -204,33 +210,43 @@ def _participant_tracks(folder: Path, part_num: str, profile: ScanProfile) -> li
     return tracks
 
 
-# Видео-контейнеры: в plain-раскладке видео-ДУБЛЬ аудио (тот же stem или общий
-# числовой хвост ≥4 цифр — конвенция Zoom) не должен становиться второй
-# «дорожкой»; несвязанное видео остаётся дорожкой (тот же урок, что F7).
-_VIDEO_SUFFIXES = {".mp4", ".mov", ".webm", ".mkv"}
+# Видео-контейнеры: видео-ДУБЛЬ аудио (тот же stem или общий числовой хвост ≥4
+# цифр — конвенция Zoom) не должен становиться второй «дорожкой»; несвязанное
+# видео остаётся дорожкой (урок F7). Единая реализация — здесь (чистый парсер),
+# её переиспользует и Яндекс-ingest (plain-папка и папка Я.Диска).
+_VIDEO_SUFFIXES = frozenset({".mp4", ".mov", ".webm", ".mkv"})
 
 
-def _digit_tail(stem: str) -> str:
+def digit_tail(stem: str) -> str:
+    """Хвостовые цифры ≥4 (Zoom-ключ): «audio1791450993» → «1791450993», иначе ''.
+
+    Короткие хвосты (<4 цифр, «track2») — не идентификатор: пустая строка,
+    чтобы случайное совпадение цифры не склеило несвязанные файлы."""
     m = re.search(r"(\d{4,})$", stem)
     return m.group(1) if m else ""
 
 
-def _drop_video_duplicates(tracks: list[dict]) -> list[dict]:
-    audio_keys = set()
-    for t in tracks:
-        if Path(t["path"]).suffix.lower() not in _VIDEO_SUFFIXES:
-            audio_keys.add(t["name"])
-            tail = _digit_tail(t["name"])
+def drop_video_duplicates(items: list[dict], *, stem_of, suffix_of) -> list[dict]:
+    """Отсеять видео-дубли аудио-дорожек. `stem_of(item)` → имя без расширения,
+    `suffix_of(item)` → суффикс (с точкой, нижний регистр). Видео выбрасывается
+    ТОЛЬКО при наличии аудио-пары по stem или Zoom-ключу; несвязанное — остаётся."""
+    audio_keys: set[str] = set()
+    for it in items:
+        if suffix_of(it) not in _VIDEO_SUFFIXES:
+            stem = stem_of(it)
+            audio_keys.add(stem)
+            tail = digit_tail(stem)
             if tail:
                 audio_keys.add(tail)
 
-    def _is_dup(t: dict) -> bool:
-        if Path(t["path"]).suffix.lower() not in _VIDEO_SUFFIXES:
+    def _is_dup(it: dict) -> bool:
+        if suffix_of(it) not in _VIDEO_SUFFIXES:
             return False
-        tail = _digit_tail(t["name"])
-        return t["name"] in audio_keys or bool(tail and tail in audio_keys)
+        stem = stem_of(it)
+        tail = digit_tail(stem)
+        return stem in audio_keys or bool(tail and tail in audio_keys)
 
-    return [t for t in tracks if not _is_dup(t)]
+    return [it for it in items if not _is_dup(it)]
 
 
 def _scan_plain(folder: Path, profile: ScanProfile) -> Meeting | None:
@@ -239,35 +255,25 @@ def _scan_plain(folder: Path, profile: ScanProfile) -> Meeting | None:
     Без частей и magic-конвенций. Идентичность дедупа — отпечаток КОНТЕНТА
     (имена+размеры дорожек), а не имя папки: переиспользование имени с новой
     записью транскрибируется, переименование обработанной папки — нет."""
-    tracks: list[dict] = []
-    for p in sorted(folder.iterdir()):
-        if p.is_symlink() or not p.is_file() or p.name.startswith("."):
-            continue
-        if p.suffix.lower() in profile.media_suffixes:
-            tracks.append(
-                {
-                    "name": _nfc(p.stem),
-                    "base": _nfc(p.stem),
-                    "path": str(p),
-                    "size": p.stat().st_size,
-                }
-            )
+    # Корень папки + (если задан) подпапка дорожек — один проход по обоим.
+    dirs = [folder]
     if profile.tracks_subdir:
         sub = folder / profile.tracks_subdir
         if sub.is_dir():
-            for p in sorted(sub.iterdir()):
-                if p.is_symlink() or not p.is_file() or p.name.startswith("."):
-                    continue
-                if p.suffix.lower() in profile.media_suffixes:
-                    tracks.append(
-                        {
-                            "name": _nfc(p.stem),
-                            "base": _nfc(p.stem),
-                            "path": str(p),
-                            "size": p.stat().st_size,
-                        }
-                    )
-    tracks = _drop_video_duplicates(tracks)
+            dirs.append(sub)
+    tracks: list[dict] = []
+    for d in dirs:
+        for p in sorted(d.iterdir()):
+            if p.is_symlink() or not p.is_file() or p.name.startswith("."):
+                continue
+            if p.suffix.lower() in profile.media_suffixes:
+                stem = _nfc(p.stem)
+                tracks.append(
+                    {"name": stem, "base": stem, "path": str(p), "size": p.stat().st_size}
+                )
+    tracks = drop_video_duplicates(
+        tracks, stem_of=lambda t: t["name"], suffix_of=lambda t: Path(t["path"]).suffix.lower()
+    )
     if not tracks:
         return None
     kind = "route_a" if len(tracks) > 1 else "single"

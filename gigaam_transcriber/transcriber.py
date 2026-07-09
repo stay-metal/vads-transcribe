@@ -191,7 +191,7 @@ class GigaAMTranscriber:
         публичной джобы — возвращаем модель на исходное устройство и сбрасываем
         пер-джобовую пометку, чтобы один битый файл не деградировал весь сервер.
         Если вернуть на GPU не удалось — остаёмся на CPU (лучше медленно, чем падать)."""
-        if getattr(self, "_device_fell_back", False) and self._intended_device in ("cuda", "mps"):
+        if self._device_fell_back and self._intended_device in ("cuda", "mps"):
             try:
                 if self._model is not None:
                     self._model.to(self._intended_device)

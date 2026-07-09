@@ -6,28 +6,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gigaam_transcriber.server.app import create_app
-from gigaam_transcriber.server.config import Settings
-from gigaam_transcriber.server.security import hash_password
+from tests.conftest import PASSWORD, WAV, server_settings
 
-PASSWORD = "correct-horse-battery-staple"
-
-WAV = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 32  # валидная WAV-сигнатура
 ZIP = b"PK\x03\x04" + b"\x00" * 60
 TXT = b"just some text not a media file at all......"
 
 
 def _settings(tmp_path, **over):
-    base = {
-        "user": "admin",
-        "password_hash": hash_password(PASSWORD),
-        "session_key": "session-key-aaaaaaaaaaaaaaaa",
-        "fernet_key": "fernet-key-bbbbbbbbbbbbbbbb",
-        "data_dir": tmp_path,
-        "cookie_secure": False,
-        "require_https": False,
-    }
-    base.update(over)
-    return Settings(**base)
+    return server_settings(tmp_path, **over)
 
 
 @pytest.fixture

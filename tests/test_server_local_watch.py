@@ -5,76 +5,20 @@ import unicodedata
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
-from gigaam_transcriber.data_models import TranscriptionResult, TranscriptionSegment
 from gigaam_transcriber.server import media
 from gigaam_transcriber.server.app import create_app
-from gigaam_transcriber.server.config import Settings
 from gigaam_transcriber.server.db import get_conn, init_db
 from gigaam_transcriber.server.job_runner import process_job
 from gigaam_transcriber.server.local_watch import poll_local_source, validate_watch_dir
-from gigaam_transcriber.server.security import hash_password
 from gigaam_transcriber.server.zoom_scan import folder_signature, scan_meeting
-
-PASSWORD = "correct-horse-battery-staple"
-MAGIC = "399019170"
-
-
-# --------------------------------------------------------------------------- #
-# Синтетическая Zoom-папка (структура — как в реальной выгрузке folder_example)
-# --------------------------------------------------------------------------- #
-def make_zoom_folder(
-    root: Path,
-    name: str = "2026-07-08 12.05.53 Дейли",
-    participants: tuple = (("ТимурЯйк", 1), ("PonimaiuAI", 2), ("Ольга", 4), ("Ольга", 6)),
-    magic: str = MAGIC,
-    with_conf: bool = True,
-) -> Path:
-    folder = root / name
-    folder.mkdir(parents=True)
-    (folder / f"audio1{magic}.m4a").write_bytes(b"\x00" * 8)
-    (folder / f"video1{magic}.mp4").write_bytes(b"\x00" * 8)
-    (folder / "zoomver.tag").write_text("tag")
-    if with_conf:
-        (folder / "recording.conf").write_text(
-            json.dumps({"magic_number": magic, "items": [{"process": 100}]})
-        )
-    if participants:
-        rec = folder / "Audio Record"
-        rec.mkdir()
-        for pname, idx in participants:
-            (rec / f"audio{pname}{idx}1{magic}.m4a").write_bytes(b"\x00" * 4)
-    # Чужой вывод оунера — не контент встречи.
-    (folder / "transcripts").mkdir()
-    (folder / "transcripts" / "чужое.md").write_text("x")
-    return folder
-
-
-class FakeTranscriber:
-    def transcribe_route_a(self, tracks, progress_callback=None, **kw):
-        segs = [TranscriptionSegment(text="реплика", start=0.0, end=1.0, speaker=n) for n in tracks]
-        return TranscriptionResult(
-            text="x",
-            segments=segs,
-            duration=5.0,
-            language="ru",
-            model_name="fake",
-            processing_time=1.0,
-            metadata={},
-        )
-
-    def transcribe(self, input_path, **kw):
-        segs = [TranscriptionSegment(text="привет", start=0.0, end=1.0, speaker="SPEAKER_00")]
-        return TranscriptionResult(
-            text="привет",
-            segments=segs,
-            duration=5.0,
-            language="ru",
-            model_name="fake",
-            processing_time=1.0,
-            metadata={},
-        )
+from tests.conftest import (
+    MAGIC,
+    FakeTranscriber,
+    login_client,
+    make_zoom_folder,
+    server_settings,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -83,15 +27,9 @@ def _no_ffmpeg(monkeypatch):
 
 
 def _settings(tmp_path):
-    return Settings(
-        user="admin",
-        password_hash=hash_password(PASSWORD),
-        session_key="session-key-aaaaaaaaaaaaaaaa",
-        fernet_key="fernet-key-bbbbbbbbbbbbbbbb",
-        data_dir=tmp_path / "data",
-        cookie_secure=False,
-        require_https=False,
-    )
+    # watch_dir тестов лежит в tmp_path (напр. tmp_path/"zoom") — data_dir выносим
+    # в отдельную подпапку, иначе они пересекутся (validate_watch_dir отвергнет).
+    return server_settings(tmp_path, data_dir=tmp_path / "data")
 
 
 def _make(tmp_path):
@@ -100,9 +38,7 @@ def _make(tmp_path):
     app = create_app(
         settings, enqueue=lambda jid: (process_job(settings, jid, transcriber), "gpu")[1]
     )
-    c = TestClient(app)
-    c.post("/api/auth/login", data={"username": "admin", "password": PASSWORD})
-    return c, settings, transcriber
+    return login_client(app), settings, transcriber
 
 
 # --------------------------------------------------------------------------- #
