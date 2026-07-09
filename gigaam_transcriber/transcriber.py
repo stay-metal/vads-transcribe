@@ -22,11 +22,16 @@ from .data_models import (
     OutputFormat,
     TranscriptionResult,
     TranscriptionSegment,
-    WordSegment,
+)
+from .decode import (
+    DecodeOptions,
+    decode_long_plain,
+    decode_long_with_confidence,
+    decode_onnx,
+    decode_short,
 )
 from .diarization import DiarizationManager
 from .exceptions import (
-    AudioProcessingError,
     EmptyAudioError,
     EmptyFileError,
     HFTokenMissingError,
@@ -121,6 +126,10 @@ class GigaAMTranscriber:
         self._model = None
         self._audio_processor: AudioProcessor | None = None
         self._diarization_manager: DiarizationManager | None = None
+        # Кэши ONNX-артефактов (ключ — int8-флаг; энкодер пробуем загрузить один раз).
+        self._onnx_sessions: dict[bool, Any] = {}
+        self._onnx_enc: Any = None
+        self._onnx_enc_tried = False
 
         # Состояние GPU→CPU fallback (#14, L1). _intended_device — устройство, на которое
         # репарация вернёт модель на границе джобы после прошлого аварийного отката на CPU
@@ -271,11 +280,15 @@ class GigaAMTranscriber:
         self.cleanup()
 
     def cleanup(self):
-        """Освобождение GPU памяти и ресурсов."""
-        if self._model is not None:
-            del self._model
-            self._model = None
+        """Освобождение GPU памяти и ресурсов (модель, диаризация, ONNX-кэши)."""
+        released = self._model is not None or self._diarization_manager is not None
+        self._model = None
+        self._diarization_manager = None  # pyannote-веса тоже занимают GPU-память
+        self._onnx_sessions = {}
+        self._onnx_enc = None
+        self._onnx_enc_tried = False
 
+        if released:
             try:
                 import torch
 
@@ -357,55 +370,66 @@ class GigaAMTranscriber:
         emit_l0: bool = False,
         progress_callback: Callable[[int, int], None] | None = None,
     ) -> TranscriptionResult:
-        """
-        Универсальный метод транскрипции.
+        """Универсальный метод транскрипции (audio/video, любая длительность).
 
-        Автоматически определяет тип файла (audio/video) и выбирает
-        оптимальную стратегию обработки.
+        Пайплайн: подготовка аудио → декод (torch/onnx) → опц. диаризация →
+        пост-проходы качества (флаги риска → voiceprint → сшивка → глоссарий → L2
+        «второе мнение») → метаданные → вывод (output_path + opt-in L0) + manifest.
 
-        Args:
-            input_path: Путь к входному файлу (аудио или видео)
-            output_path: Путь для сохранения результата (опционально)
-            diarization: Режим диаризации ("none", "pyannote", "hybrid")
-            num_speakers: Точное количество спикеров (если известно)
-            min_speakers: Минимальное количество спикеров
-            max_speakers: Максимальное количество спикеров
-            language: Язык ("ru")
-            output_format: Формат вывода ("txt", "json", "srt", "vtt")
-            merge_same_speaker: Объединять смежные реплики одного спикера
-            min_segment_gap: Минимальный gap для объединения (секунды)
-
-        Returns:
-            TranscriptionResult с текстом, сегментами и метаданными
+        Все флаги качества opt-in (default off), КРОМЕ ``glossary=True``.
+        ``resume=True`` возвращает кэш из manifest только при совпадении file_hash,
+        состава quality-слоёв и LAYER_VERSIONS. Кириллица вывода GigaAM
+        неприкосновенна (I1): глоссарий/L2 правят только латиницу/числа.
         """
         input_path = Path(input_path)
         start_time = time.time()
         # L1: вернуть модель на исходное устройство, если прошлая джоба упала на CPU
         # (тёплый singleton сервера переиспользуется между запросами). No-op на CPU.
         self._repair_device()
-        # Бэкенд декода: "torch" (дефолт, даёт confidence) или "onnx" (CPU/CUDA, int8-ускорение,
-        # БЕЗ per-chunk confidence — ONNX argmax не отдаёт logprob; текст argmax-идентичен torch).
-        self._backend = backend
-        self._onnx_int8 = onnx_int8
-        self._onnx_encoder = onnx_encoder
-        self._word_timestamps = word_timestamps
-        # Прогресс по VAD-сегментам (opt-in): cb(current,total) в longform-декоде.
-        # Только сайд-эффект — текст/argmax/декод не трогает (I1).
-        self._progress_cb = progress_callback
+        # Пер-джобовые опции декода — явная передача по цепочке (без мутации singleton).
+        opts = DecodeOptions(
+            backend=backend,
+            onnx_int8=onnx_int8,
+            onnx_encoder=onnx_encoder,
+            word_timestamps=word_timestamps,
+            progress_cb=progress_callback,
+        )
 
         # Валидация
         self._validate_input(input_path)
 
+        # Graceful degradation для диаризации (до resume-сигнатуры: manifest фиксирует
+        # ФАКТИЧЕСКИЙ состав обработки).
+        if diarization != "none" and self.hf_token is None:
+            warnings.warn(
+                "HF_TOKEN не установлен, диаризация будет пропущена. "
+                "Установите переменную окружения HF_TOKEN для диаризации.",
+                stacklevel=2,
+            )
+            diarization = "none"
+
         # Resume (#16): кэш результата по хэшу файла — повторный прогон пропускает ASR.
+        # Сигнатура запроса входит в manifest: смена состава quality-слоёв или бамп
+        # LAYER_VERSIONS инвалидирует кэш (иначе second_opinion=True вернул бы старый
+        # результат без L2).
         from .manifest import manifest_path_for, resume_result, write_manifest
 
+        request_sig = {
+            "diarization": diarization,
+            "glossary": glossary,
+            "second_opinion": second_opinion,
+            "voiceprint": voiceprint,
+            "preclean": preclean,
+            "backend": backend,
+            "word_timestamps": word_timestamps,
+        }
         _mpath = None
         if manifest_path:
             _mpath = Path(manifest_path)
         elif output_path:
             _mpath = manifest_path_for(output_path)
         if resume and _mpath:
-            cached = resume_result(_mpath, input_path)
+            cached = resume_result(_mpath, input_path, request=request_sig)
             if cached is not None:
                 logger.info(f"Resume: восстановлено из {_mpath} (ASR пропущен)")
                 # Resume пропускает только ASR — output_path/L0 всё равно нужно записать
@@ -414,15 +438,6 @@ class GigaAMTranscriber:
                 return cached
 
         logger.info(f"Начало транскрипции: {input_path}")
-
-        # Graceful degradation для диаризации
-        if diarization != "none" and self.hf_token is None:
-            warnings.warn(
-                "HF_TOKEN не установлен, диаризация будет пропущена. "
-                "Установите переменную окружения HF_TOKEN для диаризации.",
-                stacklevel=2,
-            )
-            diarization = "none"
 
         # Определяем тип файла и вызываем соответствующий метод (с постадийным таймингом)
         from .stage_timing import StageTimer
@@ -441,6 +456,7 @@ class GigaAMTranscriber:
                     keep_temp_audio=True,
                     diarization=diarization,
                     preclean_filter=(_PRECLEAN if preclean else None),
+                    opts=opts,
                     num_speakers=num_speakers,
                     min_speakers=min_speakers,
                     max_speakers=max_speakers,
@@ -452,23 +468,18 @@ class GigaAMTranscriber:
                     input_path,
                     diarization=diarization,
                     preclean_filter=(_PRECLEAN if preclean else None),
+                    opts=opts,
                     num_speakers=num_speakers,
                     min_speakers=min_speakers,
                     max_speakers=max_speakers,
                 )
 
-        # Флаги риска качества текста (галлюцинации/лупы) — ПОМЕТКА, не правка (I1).
-        # До сшивки (на сырых ASR-сегментах); merge объединит flags.
-        from .text_quality import detect_quality_flags
-
-        for seg in result.segments:
-            fl = detect_quality_flags(seg.text)
-            if fl:
-                seg.flags = sorted(set(seg.flags) | set(fl))
+        # Пост-проходы качества — общие с transcribe_route_a (см. хелперы ниже).
+        self._flag_text_quality(result.segments)
 
         # Voiceprint: переименовать анонимных «Спикер №N» в реальные имена по галерее голосов
         # (opt-in, precision-first: при сомнении метка остаётся «Спикер №N»). Меняет МЕТКУ
-        # спикера, не текст (provenance текста не трогаем). UI не задействован.
+        # спикера, не текст (provenance текста не трогаем).
         if voiceprint and voiceprint_gallery and result.segments:
             try:
                 from .voiceprint import DEFAULT_THRESHOLD, load_gallery, name_diarized_speakers
@@ -491,44 +502,16 @@ class GigaAMTranscriber:
             result.segments = merger.merge_same_speaker_segments(
                 result.segments, max_gap=min_segment_gap
             )
-            # Обновляем полный текст
             result.text = " ".join(seg.text for seg in result.segments)
 
         # Глоссарий-runtime грузим один раз — нужен и канонизации, и fusion/праймингу L2.
-        gloss_amap: dict = {}
-        gloss_suffixable: set = set()
-        if (glossary or second_opinion) and result.segments:
-            try:
-                from .glossary import load_runtime
-
-                gloss_amap, gloss_suffixable = load_runtime()
-            except Exception as e:
-                logger.warning(f"Глоссарий не загружен: {e!r}")
-
-        # Канонизация имён/терминов (глоссарий) — детерминированный I1-safe пост-проход.
-        # Меняет только курируемые алиасы (lint по russian/english_words), кириллица verbatim.
-        if glossary and gloss_amap and result.segments:
-            from .glossary import apply_to_segments
-
-            n = apply_to_segments(result.segments, gloss_amap, gloss_suffixable)
-            if n:
-                result.text = " ".join(seg.text for seg in result.segments)
-                result.metadata["glossary_replacements"] = n
-                logger.info(f"Глоссарий: {n} замен")
-
-        # L2 «второе мнение» (opt-in): локальный Whisper перечитывает сегменты-кандидаты
-        # (с латиницей), fusion заменяет ТОЛЬКО латиницу/числа (кириллица verbatim, I1).
-        if second_opinion and result.segments:
-            try:
-                from .whisper_asr import apply_second_opinion
-
-                changed = apply_second_opinion(result, post_audio, gloss_amap)
-                if changed:
-                    result.text = " ".join(seg.text for seg in result.segments)
-                    result.metadata["second_opinion_changed"] = changed
-                    logger.info(f"L2 «второе мнение»: {changed} сегментов исправлено")
-            except Exception as e:
-                logger.warning(f"L2 пропущено: {e!r}")
+        gloss_amap, gloss_suffixable = (
+            self._load_glossary_runtime() if (glossary or second_opinion) else ({}, set())
+        )
+        if glossary:
+            self._apply_glossary(result, gloss_amap, gloss_suffixable)
+        if second_opinion:
+            self._apply_second_opinion(result, post_audio, gloss_amap)
 
         # Извлечённый из видео wav больше не нужен (voiceprint/L2 прочитали его выше).
         if _video_tmp is not None and Path(_video_tmp).exists():
@@ -548,11 +531,11 @@ class GigaAMTranscriber:
         timer.add("total", processing_time)
         result.metadata["stage_timing_sec"] = timer.as_dict()
         result.metadata["layer_versions"] = pipeline_versions()
-        if getattr(self, "_device_fell_back", False):
+        if self._device_fell_back:
             result.metadata["device_fallback"] = self.device
         if preclean:
             result.metadata["preclean"] = _PRECLEAN
-        result.metadata["backend"] = getattr(self, "_backend", "torch")
+        result.metadata["backend"] = opts.backend
 
         logger.info(
             f"Транскрипция завершена за {processing_time:.1f}с "
@@ -565,11 +548,84 @@ class GigaAMTranscriber:
         # manifest (#16): записать для будущего resume (даже если resume=False сейчас).
         if _mpath is not None:
             try:
-                write_manifest(result, input_path, _mpath)
+                write_manifest(result, input_path, _mpath, request=request_sig)
             except Exception as e:
                 logger.warning(f"manifest не записан: {e!r}")
 
         return result
+
+    # =========================================================================
+    # Пост-проходы качества — общие для transcribe() и transcribe_route_a()
+    # =========================================================================
+
+    @staticmethod
+    def _flag_text_quality(segments: list[TranscriptionSegment]) -> None:
+        """Флаги риска текста (галлюцинации/лупы) — ПОМЕТКА, не правка (I1).
+
+        Зовётся до сшивки (на сырых ASR-сегментах); merge объединит flags."""
+        from .text_quality import detect_quality_flags
+
+        for seg in segments:
+            fl = detect_quality_flags(seg.text)
+            if fl:
+                seg.flags = sorted(set(seg.flags) | set(fl))
+
+    @staticmethod
+    def _load_glossary_runtime() -> tuple[dict, set]:
+        """Глоссарий-runtime (alias_map + suffixable) — нужен канонизации и праймингу L2."""
+        try:
+            from .glossary import load_runtime
+
+            return load_runtime()
+        except Exception as e:
+            logger.warning(f"Глоссарий не загружен: {e!r}")
+            return {}, set()
+
+    @staticmethod
+    def _apply_glossary(result: TranscriptionResult, amap: dict, suffixable: set) -> None:
+        """Канонизация имён/терминов — детерминированный I1-safe пост-проход.
+
+        Меняет только курируемые алиасы (lint по russian/english_words), кириллица verbatim."""
+        if not amap or not result.segments:
+            return
+        from .glossary import apply_to_segments
+
+        n = apply_to_segments(result.segments, amap, suffixable)
+        if n:
+            result.text = " ".join(seg.text for seg in result.segments)
+            result.metadata["glossary_replacements"] = (
+                result.metadata.get("glossary_replacements", 0) + n
+            )
+            logger.info(f"Глоссарий: {n} замен")
+
+    @staticmethod
+    def _apply_second_opinion(
+        result: TranscriptionResult,
+        audio_path: Path,
+        amap: dict,
+        participants: tuple[str, ...] = (),
+    ) -> int:
+        """L2 «второе мнение» (opt-in): локальный Whisper перечитывает сегменты-кандидаты
+        (с латиницей), fusion заменяет ТОЛЬКО латиницу/числа (кириллица verbatim, I1)."""
+        if not result.segments:
+            return 0
+        try:
+            from .whisper_asr import apply_second_opinion
+
+            changed = apply_second_opinion(result, audio_path, amap, participants=participants)
+        except Exception as e:
+            # Часть сегментов могла быть слита до сбоя — пересобрать полный текст,
+            # чтобы result.text не разошёлся с segments.
+            result.text = " ".join(seg.text for seg in result.segments)
+            logger.warning(f"L2 пропущено: {e!r}")
+            return 0
+        if changed:
+            result.text = " ".join(seg.text for seg in result.segments)
+            result.metadata["second_opinion_changed"] = (
+                result.metadata.get("second_opinion_changed", 0) + changed
+            )
+            logger.info(f"L2 «второе мнение»: {changed} сегментов исправлено")
+        return changed
 
     @staticmethod
     def discover_route_a_tracks(
@@ -626,6 +682,7 @@ class GigaAMTranscriber:
         output_path: str | Path | None = None,
         output_format: OutputFormat = "txt",
         glossary: bool = True,
+        second_opinion: bool = False,
         min_segment_gap: float = 0.5,
         progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> TranscriptionResult:
@@ -634,8 +691,9 @@ class GigaAMTranscriber:
         ``tracks`` = {имя: путь}; каждая дорожка — речь ОДНОГО участника (Zoom Audio Record).
         ASR каждой дорожки → сегменты с speaker=имя (БЕЗ диаризации/voiceprint — имена точные).
         Сегменты сливаются на общий таймлайн (сортировка по времени) + сшивка одного спикера.
-        Глоссарий применяется. UI (cli_ui, один wav) не задействован. De-bleed перекрытий —
-        точка роста (сейчас кросстолк может попасть на несколько дорожек).
+        Пост-проходы качества — те же, что у transcribe(): флаги риска текста, глоссарий,
+        opt-in L2 «второе мнение» (per-track: whisper читает волну исходной дорожки).
+        De-bleed перекрытий — точка роста (кросстолк может попасть на несколько дорожек).
 
         ``progress_callback(current, total, name)`` (L4, opt-in) вызывается после каждой
         дорожки (1..N) — единственный per-track сигнал для прогресс-бара сервера на основном
@@ -645,17 +703,22 @@ class GigaAMTranscriber:
         start_time = time.time()
         # L1: репарация sticky GPU→CPU fallback на входе джобы (Route A — основной путь).
         self._repair_device()
-        self._backend = "torch"
-        self._onnx_int8 = False
-        self._onnx_encoder = False  # иначе stale True из прошлого transcribe(onnx_encoder=True)
-        self._word_timestamps = False
-        self._progress_cb = None  # route_a тикает своим per-track cb, не single-per-сегментным
+        # Дефолтные опции декода: torch, без ONNX/word-timestamps; per-track cb — свой.
+        opts = DecodeOptions()
+
+        # Глоссарий-runtime один раз на весь митинг (канонизация + прайминг L2).
+        gloss_amap, gloss_suffixable = (
+            self._load_glossary_runtime() if (glossary or second_opinion) else ({}, set())
+        )
+        participants = tuple(tracks.keys())
+
         all_segments: list[TranscriptionSegment] = []
         failed_tracks: list[dict[str, str]] = []
+        second_opinion_changed = 0
         total = len(tracks)
         for idx, (name, path) in enumerate(tracks.items()):
             try:
-                r = self._transcribe_audio(Path(path), diarization="none")
+                r = self._transcribe_audio(Path(path), diarization="none", opts=opts)
             except Exception as e:
                 # L2: изоляция ошибок по дорожкам — одна битая дорожка не должна валить весь
                 # митинг (в авто-ingest нет человека в цикле). Помечаем и продолжаем.
@@ -664,6 +727,14 @@ class GigaAMTranscriber:
                 if progress_callback is not None:
                     progress_callback(idx + 1, total, name)
                 continue
+            # Флаги качества — на сырых per-track сегментах (до слияния таймлайнов).
+            self._flag_text_quality(r.segments)
+            # L2 per-track (как в прод-репо): кандидаты с латиницей перечитываются whisper'ом
+            # по волне ИСХОДНОЙ дорожки; прайминг — глоссарий + имена участников.
+            if second_opinion:
+                second_opinion_changed += self._apply_second_opinion(
+                    r, Path(path), gloss_amap, participants=participants
+                )
             for seg in r.segments:
                 seg.speaker = name
             all_segments.extend(r.segments)
@@ -673,6 +744,8 @@ class GigaAMTranscriber:
         merger = SegmentMerger(MergeConfig(max_gap=min_segment_gap))
         all_segments = merger.merge_same_speaker_segments(all_segments, max_gap=min_segment_gap)
 
+        from .versions import pipeline_versions
+
         result = TranscriptionResult(
             text=" ".join(s.text for s in all_segments),
             segments=all_segments,
@@ -680,25 +753,24 @@ class GigaAMTranscriber:
             language="ru",
             model_name=self.model_name,
             processing_time=time.time() - start_time,
-            metadata={"route": "A", "tracks": list(tracks.keys())},
+            metadata={
+                "route": "A",
+                "tracks": list(tracks.keys()),
+                "layer_versions": pipeline_versions(),
+            },
         )
         # L2: не-обработанные дорожки → частичный транскрипт + предупреждение в UI.
         if failed_tracks:
             result.metadata["failed_tracks"] = failed_tracks
-        # L3: device_fallback на основном пути Route A (зеркало single-file ветки, :442) —
+        if second_opinion_changed:
+            result.metadata["second_opinion_changed"] = second_opinion_changed
+        # L3: device_fallback на основном пути Route A (зеркало single-file ветки) —
         # иначе GPU→CPU откат на главном сценарии невидим, и пользователь видит «зависание».
-        if getattr(self, "_device_fell_back", False):
+        if self._device_fell_back:
             result.metadata["device_fallback"] = self.device
-        if glossary and result.segments:
+        if glossary:
             try:
-                from .glossary import apply_to_segments, load_runtime
-
-                amap, suf = load_runtime()
-                if amap:
-                    n = apply_to_segments(result.segments, amap, suf)
-                    if n:
-                        result.text = " ".join(s.text for s in result.segments)
-                        result.metadata["glossary_replacements"] = n
+                self._apply_glossary(result, gloss_amap, gloss_suffixable)
             except Exception as e:
                 logger.warning(f"Глоссарий пропущен (Route A): {e!r}")
         if output_path:
@@ -710,9 +782,11 @@ class GigaAMTranscriber:
         audio_path: Path,
         diarization: DiarizationMode = "none",
         preclean_filter: str | None = None,
+        opts: DecodeOptions | None = None,
         **diarization_kwargs,
     ) -> TranscriptionResult:
         """Внутренний метод транскрипции аудио."""
+        opts = opts or DecodeOptions()
         # Подготовка аудио (конвертация в нужный формат)
         temp_audio = None
         try:
@@ -723,28 +797,24 @@ class GigaAMTranscriber:
                     audio_path, audio_filter=preclean_filter
                 )
                 working_audio = temp_audio
-            elif audio_path.suffix.lower() != ".wav":
-                temp_audio = self.audio_processor.prepare_for_gigaam(audio_path)
-                working_audio = temp_audio
             else:
-                # Проверяем параметры WAV
-                info = self.audio_processor.get_media_info(audio_path)
-                if info.get("sample_rate") != 16000 or info.get("channels") != 1:
-                    temp_audio = self.audio_processor.normalize(audio_path)
-                    working_audio = temp_audio
-                else:
-                    working_audio = audio_path
+                # prepare_for_gigaam сам решает: wav 16kHz mono → вернуть как есть,
+                # иначе конвертировать во временный wav.
+                working_audio = self.audio_processor.prepare_for_gigaam(audio_path)
+                if working_audio != audio_path:
+                    temp_audio = working_audio
 
             # Получаем длительность
             duration = self.audio_processor.get_duration(working_audio)
 
             # Транскрипция
-            if getattr(self, "_backend", "torch") == "onnx":
-                segments = self._transcribe_onnx(working_audio)
+            if opts.backend == "onnx":
+                sessions, cfg = self._get_onnx(opts.onnx_int8)
+                segments = decode_onnx(sessions, cfg, working_audio, opts.progress_cb)
             elif duration <= self.MAX_SHORT_DURATION:
-                segments = self._transcribe_short(working_audio)
+                segments = decode_short(self.model, working_audio, duration)
             else:
-                segments = self._transcribe_long(working_audio)
+                segments = self._decode_long(working_audio, opts)
 
             if not segments:
                 raise EmptyAudioError(str(audio_path))
@@ -815,209 +885,56 @@ class GigaAMTranscriber:
                 except Exception:
                     pass
 
-    def _transcribe_short(self, audio_path: Path) -> list[TranscriptionSegment]:
-        """Транскрипция короткого аудио (< 25 сек)."""
-        logger.debug(f"Транскрипция короткого аудио: {audio_path}")
+    def _decode_long(self, audio_path: Path, opts: DecodeOptions) -> list[TranscriptionSegment]:
+        """Longform-декод с оркестрацией fallback'ов.
 
-        result = self.model.transcribe(str(audio_path))
-        # Совместимость API GigaAM: main → TranscriptionResult(.text); 0.1.0 → str
-        text = result.text if hasattr(result, "text") else result
-        duration = self.audio_processor.get_duration(audio_path)
-
-        if not text or not text.strip():
-            return []
-
-        return [
-            TranscriptionSegment(
-                text=text.strip(),
-                start=0.0,
-                end=duration,
-            )
-        ]
-
-    def _transcribe_long(self, audio_path: Path) -> list[TranscriptionSegment]:
-        """Транскрипция длинного аудио.
-
-        Пытается снять per-chunk acoustic confidence низкоуровневым greedy-циклом
-        (GigaAM main, RNN-T); при недоступности API — fallback на высокоуровневый
-        ``model.transcribe_longform`` (тот же текст, без confidence)."""
+        Confidence-путь (greedy RNN-T, decode.decode_long_with_confidence) → при GPU-сбое
+        перенос модели на CPU и повтор (#14) → при прочих сбоях (или повторном сбое уже
+        на CPU) — высокоуровневый ``model.transcribe_longform`` без confidence."""
         logger.debug(f"Транскрипция длинного аудио: {audio_path}")
+        onnx_enc = self._get_onnx_encoder() if opts.onnx_encoder else None
         try:
-            return self._transcribe_long_with_confidence(audio_path)
+            return decode_long_with_confidence(self.model, audio_path, opts, onnx_enc)
         except (RuntimeError, MemoryError) as e:
             # GPU OOM / сбой ядра на MPS/CUDA → перенести модель на CPU и повторить (#14).
             if self.device in ("mps", "cuda") and self._gpu_to_cpu_fallback(e):
                 logger.warning(f"GPU-сбой декода ({e!r}); повтор на CPU")
-                return self._transcribe_long_with_confidence(audio_path)
+                try:
+                    return decode_long_with_confidence(self.model, audio_path, opts, onnx_enc)
+                except Exception as e2:
+                    # Вторая ошибка уже на CPU → деградируем на plain-путь, как и при
+                    # ошибке без GPU-сбоя (лучше текст без confidence, чем упавшая джоба).
+                    logger.warning(
+                        f"Confidence-путь упал и на CPU ({e2!r}); fallback на transcribe_longform"
+                    )
+                    return decode_long_plain(self.model, audio_path)
             logger.warning(f"Confidence-путь упал ({e!r}); fallback на transcribe_longform")
-            return self._transcribe_long_plain(audio_path)
+            return decode_long_plain(self.model, audio_path)
         except Exception as e:
             logger.warning(
                 f"Per-chunk confidence недоступен ({e!r}); "
                 "fallback на model.transcribe_longform без confidence"
             )
-            return self._transcribe_long_plain(audio_path)
+            return decode_long_plain(self.model, audio_path)
 
-    def _transcribe_long_with_confidence(self, audio_path: Path) -> list[TranscriptionSegment]:
-        """Низкоуровневый longform-декод с per-chunk confidence (greedy RNN-T).
-
-        Воспроизводит ``model.transcribe_longform`` (тот же ``segment_audio_file`` +
-        ``forward`` + greedy-декод), но через ``decode_with_confidence``: текст
-        **бит-в-бит** идентичен (argmax по log-softmax == argmax по логитам, I1),
-        дополнительно — ``confidence`` на каждый чанк. Требует GigaAM main API."""
-        import torch
-        from gigaam.preprocess import SAMPLE_RATE
-        from gigaam.utils import AudioDataset
-        from gigaam.vad_utils import segment_audio_file
-        from torch.utils.data import DataLoader
-
-        from .confidence import decode_with_confidence
-
-        model = self.model
-        seg_audios, boundaries = segment_audio_file(
-            str(audio_path), SAMPLE_RATE, device=model._device
-        )
-        if not seg_audios:
-            return []
-
-        ds = AudioDataset(seg_audios, tokenizer=None)
-        dl = DataLoader(
-            ds,
-            batch_size=16,
-            shuffle=False,
-            collate_fn=AudioDataset.collate,
-            num_workers=0,
-        )
-
-        wt = getattr(self, "_word_timestamps", False)
-        onnx_enc = self._get_onnx_encoder() if getattr(self, "_onnx_encoder", False) else None
-        segments: list[TranscriptionSegment] = []
-        idx = 0
-        with torch.inference_mode():
-            for wav_pad, wav_lens in dl:
-                wav_pad = wav_pad.to(model._device).to(model._dtype)
-                wav_lens = wav_lens.to(model._device)
-                if onnx_enc is not None:
-                    encoded, encoded_len = onnx_enc(model, wav_pad, wav_lens)
-                else:
-                    encoded, encoded_len = model.forward(wav_pad, wav_lens)
-                for text, conf, words in decode_with_confidence(
-                    model, encoded, encoded_len, wav_lens, word_timestamps=wt
-                ):
-                    seg_start, seg_end = boundaries[idx]
-                    idx += 1
-                    # Прогресс по VAD-сегментам (opt-in) — сайд-эффект, декод/текст не трогаем (I1).
-                    cb = getattr(self, "_progress_cb", None)
-                    if cb is not None:
-                        try:
-                            cb(idx, len(boundaries))
-                        except Exception:
-                            pass
-                    if text and text.strip():
-                        word_segs = None
-                        if words:
-                            # Времена слов — относительно начала чанка → глобализуем (+seg_start).
-                            word_segs = [
-                                WordSegment(
-                                    word=w.text,
-                                    start=round(w.start + seg_start, 3),
-                                    end=round(w.end + seg_start, 3),
-                                )
-                                for w in words  # type: ignore[attr-defined]
-                            ]
-                        segments.append(
-                            TranscriptionSegment(
-                                text=text.strip(),
-                                start=seg_start,
-                                end=seg_end,
-                                confidence=conf,
-                                words=word_segs,
-                            )
-                        )
-        return segments
-
-    def _transcribe_long_plain(self, audio_path: Path) -> list[TranscriptionSegment]:
-        """Высокоуровневый longform без confidence (fallback / GigaAM 0.1.0)."""
-        try:
-            result = self.model.transcribe_longform(str(audio_path))
-        except Exception as e:
-            logger.error(f"Ошибка transcribe_longform: {e}")
-            raise AudioProcessingError(
-                f"Ошибка при транскрипции длинного файла: {e}",
-                file_path=str(audio_path),
-                cause=e,
-            )
-
-        # Совместимость API GigaAM:
-        #   main  → LongformTranscriptionResult(.segments[].text/.start/.end)
-        #   0.1.0 → List[dict] с ключами 'transcription'/'boundaries'
-        utterances = getattr(result, "segments", result)
-
-        segments = []
-        for utt in utterances:
-            if hasattr(utt, "text"):  # новый Segment (GigaAM main)
-                text = utt.text
-                start, end = utt.start, utt.end
-            else:  # старый dict-формат (GigaAM 0.1.0)
-                text = utt["transcription"]
-                start, end = utt["boundaries"]
-
-            if text and text.strip():
-                segments.append(
-                    TranscriptionSegment(
-                        text=text.strip(),
-                        start=start,
-                        end=end,
-                    )
-                )
-
-        return segments
-
-    def _get_onnx(self):
-        """Лениво: экспорт+загрузка ONNX-сессий GigaAM (кэш на инстансе). → (sessions, model_cfg)."""
-        if getattr(self, "_onnx", None) is None:
+    def _get_onnx(self, int8: bool):
+        """Лениво: экспорт+загрузка ONNX-сессий GigaAM (кэш по int8-флагу). → (sessions, cfg)."""
+        if int8 not in self._onnx_sessions:
             from .onnx_backend import ensure_onnx, load_sessions
 
-            onnx_dir, version = ensure_onnx(
-                self.model_name, int8=getattr(self, "_onnx_int8", False)
-            )
-            self._onnx = load_sessions(onnx_dir, version, "cpu")
-        return self._onnx
+            onnx_dir, version = ensure_onnx(self.model_name, int8=int8)
+            self._onnx_sessions[int8] = load_sessions(onnx_dir, version, "cpu")
+        return self._onnx_sessions[int8]
 
     def _get_onnx_encoder(self):
         """Лениво: ONNX-энкодер split-device (encoder ORT-CPU + torch RNN-T голова → сохраняет
-        confidence). None при сбое → откат на torch model.forward."""
-        if not hasattr(self, "_onnx_enc"):
+        confidence). None при сбое → откат на torch model.forward (пробуем один раз)."""
+        if not self._onnx_enc_tried:
             from .onnx_encoder import load_onnx_encoder
 
             self._onnx_enc = load_onnx_encoder(self.model, self.model.cfg.model_name)
+            self._onnx_enc_tried = True
         return self._onnx_enc
-
-    def _transcribe_onnx(self, audio_path: Path) -> list[TranscriptionSegment]:
-        """ONNX-декод (#13): segment_audio_file + infer_onnx. БЕЗ per-chunk confidence
-        (ONNX argmax не отдаёт logprob — для confidence используйте backend='torch').
-        Текст argmax-идентичен torch; int8 ускоряет на CPU-сервере."""
-        from gigaam.onnx_utils import infer_onnx
-        from gigaam.preprocess import SAMPLE_RATE
-        from gigaam.vad_utils import segment_audio_file
-
-        sessions, cfg = self._get_onnx()
-        seg_audios, boundaries = segment_audio_file(str(audio_path), SAMPLE_RATE)
-        if not seg_audios:
-            return []
-        segments: list[TranscriptionSegment] = []
-        idx = 0
-        for i in range(0, len(seg_audios), 16):
-            chunk = seg_audios[i : i + 16]
-            texts = infer_onnx(chunk, cfg, sessions, batch_size=len(chunk), progress=False)
-            for text in texts:
-                seg_start, seg_end = boundaries[idx]
-                idx += 1
-                if text and str(text).strip():
-                    segments.append(
-                        TranscriptionSegment(text=str(text).strip(), start=seg_start, end=seg_end)
-                    )
-        return segments
 
     def _apply_diarization(
         self,

@@ -175,9 +175,31 @@ def is_candidate(text: str) -> bool:
     return bool(_LATIN_RE.search(text or ""))
 
 
-def _build_context(alias_map: dict[str, str]) -> str:
-    """Подсказка-прайминг: канонические написания терминов/имён из глоссария."""
-    return " ".join(sorted({v for v in alias_map.values() if v}))
+def _load_priming_terms() -> list[str]:
+    """Курируемые канонические EN IT/AI-термины для прайминга (config/it_ai_terms.txt, опц.).
+
+    Это НЕ правила-замены (I1 не затрагивается): только подсказка написания для whisper.
+    Порядок файла важен — ``_prompt_text`` обрезает НАЧАЛО, поэтому ценные термины
+    держатся в хвосте файла (см. шапку it_ai_terms.txt)."""
+    from ._paths import config_dir
+
+    p = config_dir() / "it_ai_terms.txt"
+    if not p.exists():
+        return []
+    return [
+        line.strip()
+        for line in p.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+
+
+def _build_context(alias_map: dict[str, str], participants: tuple[str, ...] = ()) -> str:
+    """Подсказка-прайминг: IT-словарь + каноны глоссария + имена участников.
+
+    ``_prompt_text`` оставляет ХВОСТ строки → самое ценное (каноны, участники) — в конец."""
+    canons = sorted({v for v in alias_map.values() if v})
+    parts = [p for p in participants if p]
+    return " ".join(_load_priming_terms() + canons + parts)
 
 
 def apply_second_opinion(
@@ -186,12 +208,14 @@ def apply_second_opinion(
     alias_map: dict[str, str] | None = None,
     *,
     model: str = DEFAULT_MODEL,
+    participants: tuple[str, ...] = (),
 ) -> int:
     """Перечитать сегменты-кандидаты (с латиницей) локальным Whisper и слить под I1.
 
     Возвращает число изменённых сегментов. Кириллица не трогается (fusion меняет лишь
     латиницу/числа). Уверенные прочтения сливаются, неуверенные → GigaAM (precision-first).
-    На изменённых сегментах provenance → 'second-opinion'."""
+    На изменённых сегментах provenance → 'second-opinion'. Счётчики прохода —
+    в ``result.metadata['second_opinion']``."""
     from .fusion import fuse_with_corrections
 
     alias_map = alias_map or {}
@@ -199,29 +223,41 @@ def apply_second_opinion(
     if not candidates:
         return 0
     waveform = load_waveform_16k_mono(audio_path)
-    context = _build_context(alias_map)
+    context = _build_context(alias_map, participants)
     changed = 0
+    skipped_low_confidence = 0
+    failed = 0
     all_corrections = []
     for seg in candidates:
         a = waveform[int(seg.start * SAMPLE_RATE) : int(seg.end * SAMPLE_RATE)]
         if a.size == 0:
             continue
-        # Изоляция per-segment: сбой декода одного сегмента (битый кусок волны,
+        # Изоляция per-segment: сбой декода/fusion одного сегмента (битый кусок волны,
         # кэш на read-only ФС) не должен отменять L2 для остальных.
         try:
             res = second_opinion(a, model=model, context=context)
+            if not res["confident"] or not res["text"]:
+                skipped_low_confidence += 1
+                continue
+            new_text, corrections = fuse_with_corrections(seg.text, res["text"], alias_map)
         except Exception as e:
+            failed += 1
             logger.warning("L2 пропущен для сегмента %.2f-%.2f: %r", seg.start, seg.end, e)
             continue
-        if not res["confident"] or not res["text"]:
-            continue
-        new_text, corrections = fuse_with_corrections(seg.text, res["text"], alias_map)
         if new_text != seg.text:
             seg.apply_text_edit(new_text, "second-opinion")
             changed += 1
         all_corrections.extend(corrections)
+    # Счётчики прохода — диагностика полноты L2 (сколько кандидатов реально перечитано).
+    stats = {"candidates": len(candidates), "changed": changed}
+    if skipped_low_confidence:
+        stats["skipped_low_confidence"] = skipped_low_confidence
+    if failed:
+        stats["failed"] = failed
+    result.metadata["second_opinion"] = stats
     # Самообучение глоссария (#20): копим устойчивые латиница-правки в лог; offline
-    # harvest_log сворачивает частые (count>=3) в кандидаты-terms под lint (ручная курация).
+    # harvest (dialogscribe glossary harvest) сворачивает частые (count>=3) в
+    # кандидаты-terms под lint (ручная курация).
     if all_corrections:
         try:
             from .glossary_grow import log_corrections

@@ -26,12 +26,18 @@ def manifest_path_for(output_path) -> Path:
     return p.with_suffix(p.suffix + ".manifest.json")
 
 
-def write_manifest(result: TranscriptionResult, audio_path, manifest_path) -> Path:
-    """Записать manifest (file_hash + сегменты + метаданные) атомарно (tmp+os.replace)."""
+def write_manifest(
+    result: TranscriptionResult, audio_path, manifest_path, request: dict | None = None
+) -> Path:
+    """Записать manifest (file_hash + сегменты + метаданные) атомарно (tmp+os.replace).
+
+    ``request`` — сигнатура запрошенных quality-слоёв (diarization/glossary/L2/...);
+    resume сверяет её, чтобы кэш без L2 не выдавался за результат с L2."""
     obj = {
         "manifest_version": MANIFEST_VERSION,
         "file_hash": get_file_hash(Path(audio_path)),
         "complete": True,
+        "request": request,
         "layer_versions": pipeline_versions(),
         "language": result.language,
         "model_name": result.model_name,
@@ -59,11 +65,22 @@ def load_manifest(manifest_path) -> dict | None:
         return None
 
 
-def resume_result(manifest_path, audio_path) -> TranscriptionResult | None:
-    """Восстановить result из manifest, если он complete И file_hash совпадает. Иначе None."""
+def resume_result(
+    manifest_path, audio_path, request: dict | None = None
+) -> TranscriptionResult | None:
+    """Восстановить result из manifest — только если кэш всё ещё валиден.
+
+    Условия: complete, file_hash совпадает, layer_versions не менялись (бамп
+    LAYER_VERSIONS инвалидирует кэш) и сигнатура запроса ``request`` совпадает с
+    записанной (иначе, например, запрос с second_opinion=True получил бы кэш без L2).
+    Старые manifest'ы без request инвалидируются, если request передан."""
     m = load_manifest(manifest_path)
     if not m or not m.get("complete"):
         return None
+    if m.get("layer_versions") != pipeline_versions():
+        return None  # логика слоя изменилась → артефакт устарел
+    if request is not None and m.get("request") != request:
+        return None  # другой состав quality-слоёв → нельзя резюмить
     try:
         if m.get("file_hash") != get_file_hash(Path(audio_path)):
             return None  # файл изменился → нельзя резюмить

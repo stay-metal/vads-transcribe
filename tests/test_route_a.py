@@ -111,14 +111,21 @@ def test_route_a_no_device_fallback_key_when_healthy(monkeypatch):
     assert "device_fallback" not in res.metadata
 
 
-def test_route_a_resets_onnx_encoder_flag(monkeypatch):
-    """Route A — чистый torch-путь: stale _onnx_encoder=True из прошлого
-    transcribe(onnx_encoder=True) сбрасывается (иначе тихо включится split-device ONNX)."""
+def test_route_a_decodes_with_default_options(monkeypatch):
+    """Route A — чистый torch-путь: опции декода передаются явно (DecodeOptions()),
+    состояние прошлой джобы transcribe(onnx_encoder=True) не протекает."""
+    from gigaam_transcriber.decode import DecodeOptions
+
     t = GigaAMTranscriber(device="cpu")
-    t._onnx_encoder = True  # как после transcribe(onnx_encoder=True) на тёплом singleton
-    monkeypatch.setattr(t, "_transcribe_audio", lambda *a, **k: _fake_result())
+    seen = {}
+
+    def fake(audio_path, diarization="none", opts=None, **kw):
+        seen["opts"] = opts
+        return _fake_result()
+
+    monkeypatch.setattr(t, "_transcribe_audio", fake)
     t.transcribe_route_a({"A": "a.m4a"})
-    assert t._onnx_encoder is False
+    assert seen["opts"] == DecodeOptions()  # torch, без ONNX/word-timestamps
 
 
 # --- L4: per-track progress_callback ------------------------------------------
@@ -149,3 +156,33 @@ def test_route_a_progress_callback_fires_for_failed_track(monkeypatch):
         progress_callback=lambda c, total, name: calls.append((c, total, name)),
     )
     assert calls == [(1, 1, "A")]
+
+
+def test_route_a_second_opinion_per_track(monkeypatch):
+    """L2 на Route A: whisper перечитывает волну КАЖДОЙ дорожки (per-track),
+    в прайминг уходят имена участников."""
+    import gigaam_transcriber.whisper_asr as whisper_mod
+
+    t = GigaAMTranscriber(device="cpu")
+    monkeypatch.setattr(t, "_transcribe_audio", lambda *a, **k: _fake_result("текст с Latin"))
+    calls = []
+
+    def fake_l2(result, audio_path, amap, participants=(), **kw):
+        calls.append((str(audio_path), tuple(participants)))
+        return 1
+
+    monkeypatch.setattr(whisper_mod, "apply_second_opinion", fake_l2)
+    res = t.transcribe_route_a({"Алиса": "a.m4a", "Борис": "b.m4a"}, second_opinion=True)
+    assert [c[0] for c in calls] == ["a.m4a", "b.m4a"]  # волна исходной дорожки
+    assert calls[0][1] == ("Алиса", "Борис")  # участники в прайминге
+    assert res.metadata["second_opinion_changed"] == 2
+
+
+def test_route_a_sets_quality_flags(monkeypatch):
+    """Флаги риска текста работают и на пути Route A (галлюцинация помечается)."""
+    t = GigaAMTranscriber(device="cpu")
+    monkeypatch.setattr(
+        t, "_transcribe_audio", lambda *a, **k: _fake_result("Спасибо за просмотр.")
+    )
+    res = t.transcribe_route_a({"A": "a.m4a"})
+    assert "hallucination_suspect" in res.segments[0].flags

@@ -82,6 +82,7 @@ def process_job(settings: Settings, job_id: str, transcriber) -> None:
             result = transcriber.transcribe_route_a(
                 tracks,
                 glossary=params.get("glossary", True),
+                second_opinion=params.get("second_opinion", False),
                 min_segment_gap=params.get("min_segment_gap", 0.5),
                 progress_callback=cb,
             )
@@ -110,26 +111,29 @@ def process_job(settings: Settings, job_id: str, transcriber) -> None:
             )
 
         update_job_progress(db, job_id, "formatting", 95)
-        # Не утекать абсолютные серверные пути клиенту (result.json отдаётся как есть).
-        if isinstance(result.metadata, dict):
-            result.metadata.pop("source", None)
-            # Зафиксировать фактический бэкенд диаризации (иначе UI-хедер пуст).
-            if job["mode"] == "single":
-                result.metadata.setdefault("diarization", params.get("diarization", "pyannote"))
 
         # L0-субстрат (opt-in): пишем сами — transcribe() без output_path его пропускает.
+        # Строится ДО pop("source"): _meeting_name берёт имя встречи из metadata.source,
+        # иначе все серверные L0 получали бы meeting='meeting' и коллидировали по id.
         # sha256 кладём в metadata ДО to_json() как verifiable-признак «L0 создан» для UI.
         l0_records = None
         if params.get("emit_l0"):
             try:
                 from gigaam_transcriber.l0 import build_l0, l0_sha256
 
-                l0_records = build_l0(result)
+                l0_records = build_l0(result, meeting=rec.get("title") or None)
                 if isinstance(result.metadata, dict):
                     result.metadata["l0_sha256"] = l0_sha256(l0_records)
             except Exception as l0e:  # noqa: BLE001 — L0 best-effort, не роняем джобу
                 logger.warning("L0 build не удался для джобы %s: %s", job_id, l0e)
                 l0_records = None
+
+        # Не утекать абсолютные серверные пути клиенту (result.json отдаётся как есть).
+        if isinstance(result.metadata, dict):
+            result.metadata.pop("source", None)
+            # Зафиксировать фактический бэкенд диаризации (иначе UI-хедер пуст).
+            if job["mode"] == "single":
+                result.metadata.setdefault("diarization", params.get("diarization", "pyannote"))
 
         result_json = output_dir / "result.json"
         result_json.write_text(result.to_json(), encoding="utf-8")

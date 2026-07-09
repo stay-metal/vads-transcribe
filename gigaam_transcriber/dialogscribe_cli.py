@@ -686,7 +686,56 @@ def gallery_rm(name):
 
 
 # --------------------------------------------------------------------------- #
-# serve — заглушка (реальный сервер в M2)
+# glossary — самообучение словаря (лог L2-правок → кандидаты в terms)
+# --------------------------------------------------------------------------- #
+@cli.group("glossary")
+def glossary_group():
+    """Управление глоссарием (канонизация имён/терминов)."""
+
+
+@glossary_group.command("harvest")
+@click.option("--min-count", default=3, show_default=True, help="Порог повторов правки")
+@click.option(
+    "--apply",
+    "apply_",
+    is_flag=True,
+    help="Слить кандидатов в config/glossary.json (по умолчанию — только показать)",
+)
+@guarded
+def glossary_harvest(min_count, apply_):
+    """Свернуть накопленный лог L2-правок в кандидаты-terms (под двухъязычным lint).
+
+    Precision-first: по умолчанию только печатает кандидатов (stdout, JSON) для ручной
+    курации; --apply дописывает их в config/glossary.json."""
+    import json as _json
+
+    from gigaam_transcriber._paths import config_dir
+    from gigaam_transcriber.glossary_grow import harvest_log
+
+    grown = harvest_log(min_count=min_count)
+    if not grown:
+        _eecho("Кандидатов нет (лог пуст или ни одна правка не повторилась достаточно раз).")
+        return
+    click.echo(_json.dumps(grown, ensure_ascii=False, indent=2))
+    if not apply_:
+        _eecho(f"Найдено {len(grown)} кандидатов. Добавить в глоссарий: --apply")
+        return
+    gpath = config_dir() / "glossary.json"
+    glossary = _json.loads(gpath.read_text(encoding="utf-8")) if gpath.exists() else {}
+    terms = glossary.setdefault("terms", {})
+    added = {k: v for k, v in grown.items() if k not in terms}
+    terms.update(added)
+    tmp = gpath.parent / (gpath.name + ".tmp")
+    tmp.write_text(
+        _json.dumps(glossary, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(tmp, gpath)
+    _esecho(f"✅ Добавлено {len(added)} terms в {gpath}", fg="green")
+
+
+# --------------------------------------------------------------------------- #
+# serve — dev-лаунчер web-API
 # --------------------------------------------------------------------------- #
 @cli.command()
 @click.option("--host", default="127.0.0.1", help="Хост для прослушивания")
@@ -695,11 +744,11 @@ def gallery_rm(name):
 def serve(host, port, reload):
     """Dev-лаунчер web-API (uvicorn). Прод — через nginx+compose (deploy/).
 
-    Поднимает только процесс api (без модели). gpu/io-воркеры запускаются
-    отдельно (см. deploy/docker-compose.yml). Web-SPA подключится в M4.
+    Поднимает только процесс api (модель не грузится). gpu/io-воркеры запускаются
+    отдельно (см. README, раздел «Web-сервер»).
     """
     try:
-        import uvicorn  # noqa: F401
+        import uvicorn
 
         from gigaam_transcriber.server.config import Settings
     except ImportError:
@@ -723,8 +772,6 @@ def serve(host, port, reload):
         f"DialogScribe API → http://{host}:{port}  "
         "(dev-режим; прод — за nginx по TLS через compose)"
     )
-    import uvicorn
-
     uvicorn.run(
         "gigaam_transcriber.server.app:create_app",
         host=host,

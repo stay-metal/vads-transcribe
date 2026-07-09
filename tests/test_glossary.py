@@ -126,3 +126,14 @@ def test_load_glossary_honors_env_override_after_import(monkeypatch, tmp_path):
     (cfg / "glossary.json").write_text('{"terms": {"foo": "Bar"}}', encoding="utf-8")
     monkeypatch.setenv("GIGAAM_TRANSCRIBER_CONFIG", str(cfg))
     assert load_glossary() == {"terms": {"foo": "Bar"}}
+
+
+def test_alias_map_blocks_people_homonyms():
+    """Одиночный people-алиас, совпадающий с настоящим словом («вера»), не идёт в
+    текст-замену — иначе перепишется verbatim-кириллица GigaAM (I1)."""
+    g = {"people": {"вера": "Вера Петрова", "алексей педан": "Алексей Педан"}}
+    m = alias_map(g, blocked_words={"вера"})
+    assert "вера" not in m  # имя-омоним нарицательного отфильтровано
+    assert m["алексей педан"] == "Алексей Педан"  # многословные метки не трогаем
+    # Без blocked_words поведение прежнее (например, для прайминга L2).
+    assert alias_map(g)["вера"] == "Вера Петрова"

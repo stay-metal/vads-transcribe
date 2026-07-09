@@ -190,7 +190,7 @@ class TestTranscribePostProcessing:
         monkeypatch.setattr(t, "_validate_input", lambda p: None)
 
         cached = _fake_result("кэшированный текст")
-        monkeypatch.setattr(manifest_mod, "resume_result", lambda mp, ip: cached)
+        monkeypatch.setattr(manifest_mod, "resume_result", lambda mp, ip, request=None: cached)
 
         out = tmp_path / "out.txt"
         res = t.transcribe(audio, output_path=out, resume=True)

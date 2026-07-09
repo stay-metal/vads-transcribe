@@ -22,7 +22,7 @@ WAV = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 32
 
 class FakeTranscriber:
     def transcribe_route_a(
-        self, tracks, glossary=True, min_segment_gap=0.5, progress_callback=None
+        self, tracks, glossary=True, min_segment_gap=0.5, progress_callback=None, **kwargs
     ):
         names = list(tracks)
         if progress_callback:
