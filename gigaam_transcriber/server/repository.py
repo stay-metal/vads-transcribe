@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -440,6 +440,11 @@ def get_yandex_auth(db_path: Path) -> dict | None:
     return auth
 
 
+# Активный claim старше этого возраста считаем зависшим (жёсткая смерть io-воркера
+# по SIGKILL не переводит статус в error) — ручной pull/скан может его переклеймить.
+STALE_CLAIM_SECONDS = 3600
+
+
 def claim_ingest(
     db_path: Path, key: str, resource_id: str | None, *, allow_reclaim: bool = False
 ) -> str | None:
@@ -448,12 +453,13 @@ def claim_ingest(
     Первый раз → новый surrogate. Если строка уже есть:
     - терминальную (`downloaded`/`done`) НЕ переклеймиваем (дедуп — без второй джобы);
     - активную (`claimed`/`downloading`) НЕ переклеймиваем: загрузка идёт прямо
-      сейчас — повторный клейм породил бы второе скачивание и дубль-джобу
-      (крах воркера всё равно переведёт claim в `error` через except-ветку);
+      сейчас — повторный клейм породил бы второе скачивание и дубль-джобу.
+      Исключение — `allow_reclaim` И claim старше STALE_CLAIM_SECONDS: SIGKILL
+      io-воркера не оставляет except-ветке шанса поставить `error`, и без
+      возрастного переклейма ключ застревал бы навсегда;
     - `error` (упавшая загрузка/склейка) переклеймиваем ТОЛЬКО при `allow_reclaim`
       (ручной pull/скан): авто-поллер иначе пережёвывал бы битый файл каждый тик.
-    Переклейм `error` — CAS `WHERE status='error'` (гонка ручного с кроном →
-    переклеймит ровно один).
+    Переклеймы — CAS по статусу (гонка ручного с кроном → переклеймит ровно один).
     """
     surrogate = new_id()
     with get_conn(db_path) as conn:
@@ -465,14 +471,25 @@ def claim_ingest(
         if cur.rowcount > 0:
             return surrogate
         row = conn.execute(
-            "SELECT surrogate_id, status FROM ingest_seen WHERE key=?", (key,)
+            "SELECT surrogate_id, status, created_at FROM ingest_seen WHERE key=?", (key,)
         ).fetchone()
         if row is None:  # маловероятная гонка
             return None
-        if row["status"] == "error" and allow_reclaim:
+        if allow_reclaim and row["status"] == "error":
             reclaimed = conn.execute(
-                "UPDATE ingest_seen SET status='claimed' WHERE key=? AND status='error'",
-                (key,),
+                "UPDATE ingest_seen SET status='claimed', created_at=? "
+                "WHERE key=? AND status='error'",
+                (_now(), key),
+            )
+            return row["surrogate_id"] if reclaimed.rowcount > 0 else None
+        if allow_reclaim and row["status"] in ("claimed", "downloading"):
+            cutoff = (
+                datetime.now(timezone.utc) - timedelta(seconds=STALE_CLAIM_SECONDS)
+            ).isoformat()
+            reclaimed = conn.execute(
+                "UPDATE ingest_seen SET status='claimed', created_at=? "
+                "WHERE key=? AND status=? AND created_at < ?",
+                (_now(), key, row["status"], cutoff),
             )
             return row["surrogate_id"] if reclaimed.rowcount > 0 else None
         return None  # терминальная/активная/error-без-разрешения — без второй задачи

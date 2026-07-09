@@ -18,7 +18,7 @@ import re
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from ._paths import cache_dir
+from ._paths import cache_dir, config_dir
 from .glossary import lint, load_en_words, load_ru_words
 
 
@@ -26,6 +26,11 @@ from .glossary import lint, load_en_words, load_ru_words
 # (cache_dir() лениво читает GIGAAM_TRANSCRIBER_CACHE) — не на import-time.
 def _corrections_log() -> Path:
     return cache_dir() / "corrections.jsonl"
+
+
+def _legacy_corrections_log() -> Path:
+    """Старое расположение (<config>/../.cache) — накопленное там не должно пропасть."""
+    return config_dir().parent / ".cache" / "corrections.jsonl"
 
 
 _LATIN = re.compile(r"[A-Za-z]")
@@ -76,17 +81,22 @@ def log_corrections(pairs: list[tuple[str, str]], log_path: Path | None = None) 
 def harvest_log(log_path: Path | None = None, min_count: int = 3) -> dict[str, str]:
     """Прочитать лог корректировок и свернуть в кандидаты-terms (под двухъязычным lint).
 
+    Читает и легаси-лог из прежнего расположения (переезд в ~/.cache/dialogscribe) —
+    накопленные до переезда правки продолжают учитываться в счётчиках повторов.
     Возвращает {мангл: каноника} для ручной курации — НЕ пишет glossary.json (precision-first)."""
-    log_path = Path(log_path) if log_path else _corrections_log()
-    if not log_path.exists():
-        return {}
+    paths = [Path(log_path)] if log_path else [_corrections_log(), _legacy_corrections_log()]
     pairs: list[tuple[str, str]] = []
-    for line in log_path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
+    for p in paths:
+        if not p.exists():
             continue
-        try:
-            d = json.loads(line)
-            pairs.append((str(d["mangle"]), str(d["canon"])))
-        except Exception:
-            continue
+        for line in p.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                d = json.loads(line)
+                pairs.append((str(d["mangle"]), str(d["canon"])))
+            except Exception:
+                continue
+    if not pairs:
+        return {}
     return harvest_corrections(pairs, min_count, ru_words=load_ru_words(), en_words=load_en_words())

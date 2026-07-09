@@ -79,5 +79,5 @@ def test_resume_rejects_stale_layer_versions(tmp_path, monkeypatch):
     mp = tmp_path / "m.json"
     write_manifest(_result(), audio, mp)
     assert resume_result(mp, audio) is not None
-    monkeypatch.setitem(versions_mod.LAYER_VERSIONS, "glossary", "2")
+    monkeypatch.setitem(versions_mod.LAYER_VERSIONS, "glossary", "test-bumped")
     assert resume_result(mp, audio) is None

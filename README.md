@@ -75,7 +75,8 @@ cp .env.example .env   # впишите HF_TOKEN=hf_...
 Проверка доступа к gated-моделям:
 
 ```bash
-python -c "from huggingface_hub import auth_check; \
+# import gigaam_transcriber первым — он автозагружает HF_TOKEN из .env
+python -c "import gigaam_transcriber; from huggingface_hub import auth_check; \
 [auth_check(r) for r in ('pyannote/segmentation-3.0','pyannote/speaker-diarization-3.1')]; \
 print('доступ ок')"
 ```
@@ -86,7 +87,7 @@ print('доступ ок')"
 # Один файл (аудио или видео), спикеры через диаризацию, вывод в markdown
 dialogscribe transcribe meeting.m4a -d pyannote -f md -o meeting.md
 
-# Подорожечная запись Zoom: имена спикеров = имена дорожек, HF_TOKEN не нужен
+# Подорожечная запись Zoom: имена спикеров = имена дорожек, диаризация не нужна
 dialogscribe route-a "~/Zoom/2026-07-08 12.05 Дейли" -f md -o daily.md
 
 # Пакет файлов
@@ -145,6 +146,7 @@ SQLite (WAL). SPA собирается в статику и раздаётся F
 ```bash
 cd deploy
 cp .env.example .env        # заполните хэш пароля, ключи, HF_TOKEN (см. комментарии в файле)
+mkdir -p certs              # TLS: положите fullchain.pem и privkey.pem (nginx ждёт их здесь)
 docker compose up -d --build
 ```
 

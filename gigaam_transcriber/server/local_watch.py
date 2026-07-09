@@ -336,18 +336,30 @@ def ingest_meeting(
     return out
 
 
+# «Тишина» по mtime для HTTP-скана: правки свежее этого возраста → папка ещё пишется.
+HTTP_SCAN_QUIESCENCE_SEC = 5.0
+
+
 def _probe_stable(folder: Path, profile: ScanProfile, delay: float = 1.0) -> str | None:
-    """Двойная проба сигнатуры для force-скана: ловит файл, растущий под
-    финальным именем (cp/Finder — без .tmp-маркеров). Возвращает сигнатуру
-    только если она не изменилась между двумя чтениями. `delay=0` (HTTP-скан) —
-    без ожидания: не блокируем запрос, стабильность даёт окно между сканами."""
+    """Проба стабильности для force-скана: ловит файл, растущий под финальным
+    именем (cp/Finder — без .tmp-маркеров). Крон-путь (`delay>0`) — двойное чтение
+    сигнатуры с паузой. HTTP-скан (`delay=0`) не спит в запросе — вместо паузы
+    требует «тишину» по mtime: две мгновенные пробы попали бы в паузу записи и
+    пропустили бы растущий файл."""
     first = folder_signature(folder, profile)
     if first is None:
         return None
     if delay > 0:
         time.sleep(delay)
-    second = folder_signature(folder, profile)
-    return second if second == first else None
+        second = folder_signature(folder, profile)
+        return second if second == first else None
+    try:
+        newest = max((f.stat().st_mtime for f in folder.rglob("*") if f.is_file()), default=0.0)
+    except OSError:
+        return None
+    if time.time() - newest < HTTP_SCAN_QUIESCENCE_SEC:
+        return None  # папка ещё пишется — возьмёт следующий скан
+    return first
 
 
 def poll_local_source(

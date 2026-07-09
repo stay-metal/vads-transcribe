@@ -724,3 +724,27 @@ def test_expired_token_without_refresh_needs_reauth(tmp_path):
     st = c.get("/api/yandex/status").json()
     assert st["connected"] is True and st["check_ok"] is False
     assert "переавтор" in st["reason"].lower()
+
+
+def test_claim_ingest_stale_active_reclaimable_manually(tmp_path):
+    """SIGKILL io-воркера оставляет claim в 'downloading' навсегда — ручной pull/скан
+    (allow_reclaim) переклеймивает такой claim по возрасту; свежий активный — нет."""
+    from datetime import datetime, timedelta, timezone
+
+    from gigaam_transcriber.server.db import get_conn, init_db
+    from gigaam_transcriber.server.repository import claim_ingest
+
+    db = tmp_path / "app.sqlite"
+    init_db(db)
+    s1 = claim_ingest(db, "disk:/a.m4a:rev1", None)
+    assert s1 is not None
+    # Свежий активный claim не крадётся даже вручную (загрузка может идти).
+    assert claim_ingest(db, "disk:/a.m4a:rev1", None, allow_reclaim=True) is None
+    # Состарим claim за порог зависания.
+    stale = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    with get_conn(db) as conn:
+        conn.execute("UPDATE ingest_seen SET created_at=? WHERE key=?", (stale, "disk:/a.m4a:rev1"))
+    # Авто-поллер (без allow_reclaim) по-прежнему молчит…
+    assert claim_ingest(db, "disk:/a.m4a:rev1", None) is None
+    # …а ручное действие возвращает тот же surrogate для повторной обработки.
+    assert claim_ingest(db, "disk:/a.m4a:rev1", None, allow_reclaim=True) == s1

@@ -30,6 +30,8 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from gigaam_transcriber.exceptions import UnsupportedFormatError
+
 # Подпапки, которые скан не считает контентом встречи.
 _SKIP_DIRS = {"transcripts", "done"}
 # Хвосты незавершённой синхронизации (rsync/браузер/Я.Диск-клиент).
@@ -214,7 +216,9 @@ def _participant_tracks(folder: Path, part_num: str, profile: ScanProfile) -> li
 # цифр — конвенция Zoom) не должен становиться второй «дорожкой»; несвязанное
 # видео остаётся дорожкой (урок F7). Единая реализация — здесь (чистый парсер),
 # её переиспользует и Яндекс-ingest (plain-папка и папка Я.Диска).
-_VIDEO_SUFFIXES = frozenset({".mp4", ".mov", ".webm", ".mkv"})
+# Набор — из библиотечной константы: ingest принимает ВСЕ видео-контейнеры,
+# значит и фильтр дублей обязан знать их все (иначе .avi-дубль стал бы «дорожкой»).
+_VIDEO_SUFFIXES = frozenset(UnsupportedFormatError.SUPPORTED_VIDEO)
 
 
 def digit_tail(stem: str) -> str:

@@ -164,10 +164,14 @@ def test_poll_disabled_source_noop_but_force_scans(tmp_path):
     assert len(poll_local_source(settings, enqueue, force=True)) == 1
 
 
-def test_scan_endpoint_starts_jobs(tmp_path):
+def test_scan_endpoint_starts_jobs(tmp_path, monkeypatch):
+    import gigaam_transcriber.server.local_watch as lw
+
     c, settings, _ = _make(tmp_path)
     watch = tmp_path / "zoom"
     make_zoom_folder(watch)
+    # Свежесозданные файлы не прошли бы mtime-«тишину» HTTP-скана — обнуляем порог.
+    monkeypatch.setattr(lw, "HTTP_SCAN_QUIESCENCE_SEC", 0.0)
     _configure_local(c, watch, enabled=False)
     r = c.post("/api/ingest/local/scan")
     assert r.status_code == 200, r.text
@@ -366,3 +370,15 @@ def test_ingest_sources_migration_from_singleton(tmp_path):
         ("yandex", "/Записи", 1)
     ]
     init_db(db_path)  # идемпотентно
+
+
+def test_scan_endpoint_skips_folder_still_being_written(tmp_path, monkeypatch):
+    """HTTP-скан не спит в запросе, но растущую папку (свежий mtime) пропускает —
+    её возьмёт следующий скан, когда запись закончится."""
+    c, settings, _ = _make(tmp_path)
+    watch = tmp_path / "zoom"
+    make_zoom_folder(watch)  # только что созданные файлы = «ещё пишется»
+    _configure_local(c, watch, enabled=False)
+    r = c.post("/api/ingest/local/scan")
+    assert r.status_code == 200
+    assert r.json()["started"] == []

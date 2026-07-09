@@ -640,7 +640,7 @@ class GigaAMTranscriber:
         import re
         import unicodedata
 
-        base = Path(folder)
+        base = Path(folder).expanduser()
         d = base / speaker_dir
         d = d if d.is_dir() else base
         files = glob.glob(str(d / "*.m4a"))
@@ -935,12 +935,17 @@ class GigaAMTranscriber:
 
     def _get_onnx_encoder(self):
         """Лениво: ONNX-энкодер split-device (encoder ORT-CPU + torch RNN-T голова → сохраняет
-        confidence). None при сбое → откат на torch model.forward (пробуем один раз)."""
+        confidence). None при ЛЮБОМ сбое → откат на torch model.forward (пробуем один раз);
+        не бросает — иначе опциональное ускорение роняло бы джобу целиком."""
         if not self._onnx_enc_tried:
-            from .onnx_encoder import load_onnx_encoder
-
-            self._onnx_enc = load_onnx_encoder(self.model, self.model.cfg.model_name)
             self._onnx_enc_tried = True
+            try:
+                from .onnx_encoder import load_onnx_encoder
+
+                self._onnx_enc = load_onnx_encoder(self.model, self.model.cfg.model_name)
+            except Exception as e:
+                logger.warning(f"ONNX-энкодер недоступен ({e!r}); torch-энкодер")
+                self._onnx_enc = None
         return self._onnx_enc
 
     def _apply_diarization(

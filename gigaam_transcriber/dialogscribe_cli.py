@@ -15,7 +15,7 @@ voiceprint-галереи). Никакого собственного декод
 Команды:
     dialogscribe transcribe <input> [...]      # один файл
     dialogscribe batch <inputs...> -o OUTDIR   # пакет (progress_callback)
-    dialogscribe route-a <folder> [...]        # подорожечно, без HF_TOKEN
+    dialogscribe route-a <folder> [...]        # подорожечно, без диаризации
     dialogscribe gallery build|list|rm         # голосовые галереи (voiceprint)
     dialogscribe glossary harvest [--apply]    # самообучение глоссария (лог L2)
     dialogscribe serve [--host --port]         # dev-лаунчер web-API
@@ -42,8 +42,8 @@ from gigaam_transcriber import GigaAMTranscriber, TranscriberError, __version__
 # Утилиты путей (NFC/NFD — macOS HFS+) и форматирование
 # --------------------------------------------------------------------------- #
 def normalize_path(path: str) -> Path:
-    """Нормализация пути для обхода NFD/NFC-расхождений (macOS HFS+)."""
-    p = Path(unicodedata.normalize("NFC", str(path)))
+    """Нормализация пути: `~` + NFD/NFC-расхождения (macOS HFS+)."""
+    p = Path(unicodedata.normalize("NFC", str(path))).expanduser()
     if p.exists():
         return p
     parent = p.parent

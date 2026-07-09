@@ -14,8 +14,10 @@ LAYER_VERSIONS: dict[str, str] = {
     "confidence": "rnnt-greedy-1",
     "diarize": "pyannote-3.1-1",
     "speaker_map": "overlap-1",
-    "glossary": "1",
-    "second_opinion": "faster-whisper-small-1",
+    # 2: одиночные people-алиасы-омонимы нарицательных исключены из текст-замены (I1)
+    "glossary": "2",
+    # 2: прайминг обогащён it_ai_terms.txt и именами участников; per-segment изоляция
+    "second_opinion": "faster-whisper-small-2",
     "voiceprint": "ecapa-1",
     "l0": "v1",
     "render": "v1",

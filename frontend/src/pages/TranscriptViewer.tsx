@@ -55,10 +55,14 @@ export default function TranscriptViewer() {
     const es = new EventSource(`/api/jobs/${jobId}/events`);
     es.addEventListener("job", (e) => {
       try {
-        // Событие несёт только прогресс/статус (без title/track_count) — мержим
-        // поверх кэша, не затирая обогащённые поля записи.
-        const payload = JSON.parse((e as MessageEvent).data) as Partial<Job>;
-        qc.setQueryData<Job>(["job", jobId], (old) => (old ? { ...old, ...payload } : (payload as Job)));
+        // SSE-payload — сырая строка jobs (title/track_count в ней null, без
+        // обогащения из recordings) — переносим только НЕпустые поля, иначе
+        // spread затирал бы обогащённый кэш null-ами.
+        const raw = JSON.parse((e as MessageEvent).data) as Partial<Job>;
+        const payload = Object.fromEntries(
+          Object.entries(raw).filter(([, v]) => v !== null && v !== undefined),
+        ) as Partial<Job>;
+        qc.setQueryData<Job>(["job", jobId], (old) => (old ? { ...old, ...payload } : (raw as Job)));
         // На терминальном статусе перечитываем полную запись (с именем встречи).
         if (payload.state && !ACTIVE_STATES.includes(payload.state)) {
           qc.invalidateQueries({ queryKey: ["job", jobId] });

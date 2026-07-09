@@ -228,6 +228,7 @@ def apply_second_opinion(
     skipped_low_confidence = 0
     failed = 0
     all_corrections = []
+    consecutive_failures = 0
     for seg in candidates:
         a = waveform[int(seg.start * SAMPLE_RATE) : int(seg.end * SAMPLE_RATE)]
         if a.size == 0:
@@ -238,12 +239,22 @@ def apply_second_opinion(
             res = second_opinion(a, model=model, context=context)
             if not res["confident"] or not res["text"]:
                 skipped_low_confidence += 1
+                consecutive_failures = 0
                 continue
             new_text, corrections = fuse_with_corrections(seg.text, res["text"], alias_map)
         except Exception as e:
             failed += 1
+            consecutive_failures += 1
             logger.warning("L2 пропущен для сегмента %.2f-%.2f: %r", seg.start, seg.end, e)
+            # Систематический сбой (модель не грузится: нет сети/HF Hub) — не долбим
+            # каждый кандидат сетевым таймаутом, сдаёмся на весь проход.
+            if consecutive_failures >= 3:
+                logger.warning(
+                    "L2 прерван: %d сбоев подряд (модель недоступна?)", consecutive_failures
+                )
+                break
             continue
+        consecutive_failures = 0
         if new_text != seg.text:
             seg.apply_text_edit(new_text, "second-opinion")
             changed += 1
