@@ -478,3 +478,63 @@ def test_scan_imports_legacy_dialogscribe_output(tmp_path, monkeypatch):
     assert len(started) == 1 and started[0]["kind"] == "imported"
     res = c.get(f"/api/jobs/{started[0]['job_id']}/result").json()
     assert res["segments"][0]["text"] == "легаси транскрипт"
+
+
+def test_fixed_output_to_readonly_root_rejected(tmp_path):
+    """Несоздаваемый fixed-путь вывода отклоняется при сохранении профиля,
+    а не роняет потом каждую джобу на mkdir (кейс «/transcripts» на macOS)."""
+    c, settings, _ = _make(tmp_path)
+    watch = tmp_path / "zoom"
+    watch.mkdir()
+    r = c.put(
+        "/api/ingest/source",
+        json={
+            "watch_dir": str(watch),
+            "enabled": False,
+            "source_type": "local",
+            "scan_profile": {
+                "layout": "zoom",
+                "output": {"mode": "fixed", "dir": "/transcripts-нет-прав"},
+            },
+        },
+    )
+    assert r.status_code == 400
+    assert "Не удалось создать" in r.text
+
+
+def test_import_flat_transcripts_layout(tmp_path, monkeypatch):
+    """Плоская раскладка ранних прогонов/custom (transcripts/result.json)
+    импортируется пресканом даже при fixed-профиле вывода."""
+    import gigaam_transcriber.server.local_watch as lw
+
+    c, settings, transcriber = _make(tmp_path)
+    monkeypatch.setattr(lw, "HTTP_SCAN_QUIESCENCE_SEC", 0.0)
+    watch = tmp_path / "zoom"
+    folder = make_zoom_folder(watch)
+    flat = folder / "transcripts"
+    (flat / "result.json").write_text(
+        json.dumps(
+            {
+                "full_text": "плоский транскрипт",
+                "metadata": {"duration": 5.0},
+                "segments": [{"start": 0.0, "end": 1.0, "text": "плоский транскрипт"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    fixed_out = tmp_path / "внешний-вывод"
+    r = c.put(
+        "/api/ingest/source",
+        json={
+            "watch_dir": str(watch),
+            "enabled": False,
+            "source_type": "local",
+            "scan_profile": {"layout": "zoom", "output": {"mode": "fixed", "dir": str(fixed_out)}},
+        },
+    )
+    assert r.status_code == 200, r.text
+    started = c.post("/api/ingest/local/scan").json()["started"]
+    assert len(started) == 1 and started[0]["kind"] == "imported"
+    res = c.get(f"/api/jobs/{started[0]['job_id']}/result").json()
+    assert res["segments"][0]["text"] == "плоский транскрипт"

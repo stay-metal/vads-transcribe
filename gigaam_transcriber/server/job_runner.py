@@ -47,6 +47,8 @@ _ERROR_MAP = {
     "DiarizationError": ("diarization_failed", "Ошибка диаризации"),
     "FFmpegNotFoundError": ("ffmpeg_missing", "ffmpeg недоступен"),
     "AudioProcessingError": ("audio_processing", "Ошибка обработки аудио"),
+    "OSError": ("output_unwritable", "Папка вывода недоступна для записи"),
+    "PermissionError": ("output_unwritable", "Папка вывода недоступна для записи"),
 }
 
 
@@ -89,9 +91,11 @@ def process_job(settings: Settings, job_id: str, transcriber) -> None:
 
     params: dict[str, Any] = job["params"]
     output_dir = Path(job["output_dir"])
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
+        # mkdir внутри try: недоступный output_dir (read-only ФС, выбитый диск) —
+        # честный state='error', а не джоба, зависшая в 'asr' навсегда.
+        output_dir.mkdir(parents=True, exist_ok=True)
         cb = _stage_callback(settings, job_id)
         if job["mode"] == "route_a":
             tracks = {t["name"]: t["path"] for t in rec["tracks"]}

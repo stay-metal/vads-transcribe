@@ -116,6 +116,12 @@ def validate_output_profile(settings: Settings, watch_dir: str, profile: ScanPro
     data_dir = Path(settings.data_dir).resolve()
     if out == data_dir or data_dir in out.parents:
         return "Папка транскриптов не должна пересекаться с рабочей директорией сервера"
+    # Пробное создание СЕЙЧАС: молча принятый несоздаваемый путь (read-only корень
+    # «/transcripts» на macOS, выбитый диск) ронял бы каждую джобу на mkdir.
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return f"Не удалось создать папку транскриптов: {out} (нет прав или read-only)"
     return None
 
 
@@ -266,18 +272,24 @@ def _import_existing_transcript(
     recording + job(state=done) без транскрипции (переустановка/перенос архива
     не пережёвывает GPU уже сделанное). Битый/нечитаемый result.json → None
     (честная транскрипция). Возвращает job_id или None."""
-    out_dir = _base_output_dir(meeting, part.index, profile)
-    if not (out_dir / "result.json").exists() and profile.output_mode != "fixed":
-        # Легаси-раскладка до ребрендинга: архивы, транскрибированные прежними
-        # версиями, лежат в transcripts/dialogscribe — импортируем и их.
-        legacy = meeting.folder / "transcripts" / "dialogscribe"
-        if part.index > 1:
-            legacy = legacy / f"Часть {part.index}"
-        if (legacy / "result.json").exists():
-            out_dir = legacy
-    result_json = out_dir / "result.json"
-    if not result_json.exists():
+
+    # Кандидаты-раскладки по убыванию приоритета: текущий профиль, затем известные
+    # раскладки прежних версий/инструментов В ПАПКЕ ВСТРЕЧИ — прескан не должен
+    # зависеть от того, как сейчас настроен вывод (fixed-профиль искал бы только
+    # в своей папке и пере-жёвывал архив, транскрибированный по-старому).
+    def _with_part(base: Path) -> Path:
+        return base / f"Часть {part.index}" if part.index > 1 else base
+
+    candidates = [
+        _base_output_dir(meeting, part.index, profile),
+        _with_part(meeting.folder / "transcripts" / "bloodtranscripts"),
+        _with_part(meeting.folder / "transcripts" / "dialogscribe"),  # до ребрендинга
+        _with_part(meeting.folder / "transcripts"),  # плоская раскладка ранних прогонов
+    ]
+    out_dir = next((d for d in candidates if (d / "result.json").exists()), None)
+    if out_dir is None:
         return None
+    result_json = out_dir / "result.json"
     try:
         meta = (json.loads(result_json.read_text(encoding="utf-8")) or {}).get("metadata") or {}
     except (OSError, ValueError):
