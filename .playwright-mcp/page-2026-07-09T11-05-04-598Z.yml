@@ -1,0 +1,123 @@
+- generic [ref=f6e3]:
+  - complementary [ref=f6e4]:
+    - link "bloodtranscripts Понимаю AI" [ref=f6e5] [cursor=pointer]:
+      - /url: /
+      - img [ref=f6e7]
+      - generic [ref=f6e14]:
+        - generic [ref=f6e15]: bloodtranscripts
+        - generic [ref=f6e16]: Понимаю AI
+    - navigation [ref=f6e17]:
+      - link "Записи" [ref=f6e18] [cursor=pointer]:
+        - /url: /
+        - img [ref=f6e19]
+        - text: Записи
+      - link "Загрузить" [ref=f6e22] [cursor=pointer]:
+        - /url: /upload
+        - img [ref=f6e23]
+        - text: Загрузить
+      - link "Источники" [ref=f6e26] [cursor=pointer]:
+        - /url: /sources
+        - img [ref=f6e27]
+        - text: Источники
+      - link "Словарь" [ref=f6e29] [cursor=pointer]:
+        - /url: /glossary
+        - img [ref=f6e30]
+        - text: Словарь
+      - link "Настройки" [ref=f6e33] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=f6e34]
+        - text: Настройки
+    - button "Выйти" [ref=f6e39] [cursor=pointer]:
+      - img [ref=f6e40]
+      - text: Выйти
+  - main [ref=f6e44]:
+    - generic [ref=f6e45]:
+      - generic [ref=f6e46]:
+        - generic [ref=f6e47]:
+          - generic [ref=f6e48]:
+            - generic [ref=f6e49]:
+              - link "← К записям" [ref=f6e50] [cursor=pointer]:
+                - /url: /
+              - generic [ref=f6e51]: Транскрипт
+            - heading "Проверка интерфейса 2:00 5 реплик" [level=1] [ref=f6e52]:
+              - generic "Проверка интерфейса" [ref=f6e53]
+              - generic [ref=f6e54]:
+                - generic [ref=f6e55]: 2:00
+                - generic [ref=f6e56]: 5 реплик
+          - generic [ref=f6e57]:
+            - generic [ref=f6e58]:
+              - img [ref=f6e59]
+              - text: Скачать
+            - link "Markdown" [ref=f6e61] [cursor=pointer]:
+              - /url: /api/jobs/a84563bb4582471f937b2eba998945b6/download?format=md
+              - button "Markdown" [ref=f6e62]
+            - link "Текст" [ref=f6e63] [cursor=pointer]:
+              - /url: /api/jobs/a84563bb4582471f937b2eba998945b6/download?format=txt
+              - button "Текст" [ref=f6e64]
+            - link "JSON" [ref=f6e65] [cursor=pointer]:
+              - /url: /api/jobs/a84563bb4582471f937b2eba998945b6/download?format=json
+              - button "JSON" [ref=f6e66]
+            - link "SRT" [ref=f6e67] [cursor=pointer]:
+              - /url: /api/jobs/a84563bb4582471f937b2eba998945b6/download?format=srt
+              - button "SRT" [ref=f6e68]
+            - link "VTT" [ref=f6e69] [cursor=pointer]:
+              - /url: /api/jobs/a84563bb4582471f937b2eba998945b6/download?format=vtt
+              - button "VTT" [ref=f6e70]
+            - button "Обновить файл" [ref=f6e71] [cursor=pointer]
+        - generic [ref=f6e76]:
+          - button "Играть" [ref=f6e77] [cursor=pointer]:
+            - img [ref=f6e78]
+            - text: Играть
+          - generic [ref=f6e80]: 0:00 / 2:00
+          - generic [ref=f6e81]:
+            - button "−" [ref=f6e82] [cursor=pointer]
+            - generic [ref=f6e83]: масштаб
+            - button "+" [ref=f6e84] [cursor=pointer]
+          - generic [ref=f6e86] [cursor=pointer]:
+            - switch "Подсветка сомнительных мест" [ref=f6e87]
+            - generic [ref=f6e90]: Подсветка сомнительных мест
+      - generic [ref=f6e91]:
+        - generic [ref=f6e92]: Голоса
+        - textbox [ref=f6e95]: Спикер №1
+        - textbox [ref=f6e98]: Спикер №2
+      - generic [ref=f6e99]:
+        - generic [ref=f6e100] [cursor=pointer]:
+          - generic [ref=f6e101]:
+            - button "0:02" [ref=f6e102]
+            - generic [ref=f6e104]: Спикер №1
+            - generic [ref=f6e105]: модель
+            - generic [ref=f6e106]: "0.85"
+            - button "Изменить" [ref=f6e107]
+          - paragraph [ref=f6e108]: Да, Тимур, начинай. Так, что? Я вчера и сегодня по админке сделал. Переназначение там врачей, тестовый пользователь.
+        - generic [ref=f6e109] [cursor=pointer]:
+          - generic [ref=f6e110]:
+            - button "0:24" [ref=f6e111]
+            - generic [ref=f6e113]: Спикер №1
+            - generic [ref=f6e114]: модель
+            - generic [ref=f6e115]: "0.85"
+            - button "Изменить" [ref=f6e116]
+          - paragraph [ref=f6e117]: А-а, вот, потом, э-э, сделал предпросмотр перед одобрением отчёта, добавил айдишники к отчётам. Только Оль, кстати, сразу там скажу, в итоге я сделал не PDF- а вот, ну, в том формате, как у нас, э-э, ну, в стилистике админки, короче, потому что, э-э, PDF-ка генерируется.
+        - generic [ref=f6e118] [cursor=pointer]:
+          - generic [ref=f6e119]:
+            - button "0:48" [ref=f6e120]
+            - generic [ref=f6e122]: Спикер №1
+            - generic [ref=f6e123]: модель
+            - generic [ref=f6e124]: "0.85"
+            - button "Изменить" [ref=f6e125]
+          - paragraph [ref=f6e126]: Долго достаточно. Ну, то есть, если там какое-то поле поменять, это полностью PDF перерендерить, и это... Ну, время короче. В зависимости, то есть как часто жать эту кнопку, вот. Ну, то есть
+        - generic [ref=f6e127] [cursor=pointer]:
+          - generic [ref=f6e128]:
+            - button "1:07" [ref=f6e129]
+            - generic [ref=f6e131]: Спикер №1
+            - generic [ref=f6e132]: модель
+            - generic [ref=f6e133]: "0.86"
+            - button "Изменить" [ref=f6e134]
+          - paragraph [ref=f6e135]: — Вообще, это принципиально, чтобы был PDF? — Да. — Я не просто так это просила. Мне надо смотреть так, как это будут видеть врачи. — Врачи наши? — Ну, окей, хорошо. Ну, не врачи наши, а врачи, которые будут получать наш отчёт. Они видят это в HTML совсем в другом формате уже.
+        - generic [ref=f6e136] [cursor=pointer]:
+          - generic [ref=f6e137]:
+            - button "1:27" [ref=f6e138]
+            - generic [ref=f6e140]: Спикер №2
+            - generic [ref=f6e141]: модель
+            - generic [ref=f6e142]: "0.88"
+            - button "Изменить" [ref=f6e143]
+          - paragraph [ref=f6e144]: Ну, не совсем в другом, но как бы. Я понимаю, но мне надо видеть именно со всеми форматированием, со всеми вот этими штуками, которые, блин, я делала. Это важно. Ну, окей, хорошо, попробую как-нибудь фоном, потому что Типа, если бы мне надо было бы просто, типа, посмотреть, какие поля, мне бы не надо было бы делать предпросмотр, потому что я бы и так бы сообразила бы эту структуру зная наизусть. Я бы просто из тех полей

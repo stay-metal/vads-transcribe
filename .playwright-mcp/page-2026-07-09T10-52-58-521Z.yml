@@ -1,0 +1,212 @@
+- generic [ref=e22]:
+  - complementary [ref=e23]:
+    - link "bloodtranscripts Понимаю AI" [ref=e24] [cursor=pointer]:
+      - /url: /
+      - img [ref=e26]
+      - generic [ref=e33]:
+        - generic [ref=e34]: bloodtranscripts
+        - generic [ref=e35]: Понимаю AI
+    - navigation [ref=e36]:
+      - link "Записи" [ref=e37] [cursor=pointer]:
+        - /url: /
+        - img [ref=e38]
+        - text: Записи
+      - link "Загрузить" [ref=e41] [cursor=pointer]:
+        - /url: /upload
+        - img [ref=e42]
+        - text: Загрузить
+      - link "Источники" [ref=e45] [cursor=pointer]:
+        - /url: /sources
+        - img [ref=e46]
+        - text: Источники
+      - link "Словарь" [ref=e48] [cursor=pointer]:
+        - /url: /glossary
+        - img [ref=e49]
+        - text: Словарь
+      - link "Настройки" [ref=e52] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=e53]
+        - text: Настройки
+    - button "Выйти" [ref=e58] [cursor=pointer]:
+      - img [ref=e59]
+      - text: Выйти
+  - main [ref=e63]:
+    - generic [ref=e64]:
+      - generic [ref=e65]:
+        - generic [ref=e66]:
+          - generic [ref=e67]: Обработка
+          - heading "Записи" [level=1] [ref=e68]
+        - link "Новая запись" [ref=e69] [cursor=pointer]:
+          - /url: /upload
+          - button "Новая запись" [ref=e70]:
+            - img [ref=e71]
+            - text: Новая запись
+      - generic [ref=e74]:
+        - generic [ref=e75]:
+          - button "Все 7" [ref=e76] [cursor=pointer]:
+            - text: Все
+            - generic [ref=e77]: "7"
+          - button "Готово 6" [ref=e78] [cursor=pointer]:
+            - text: Готово
+            - generic [ref=e79]: "6"
+          - button "Ошибки 0" [ref=e80] [cursor=pointer]:
+            - text: Ошибки
+            - generic [ref=e81]: "0"
+          - button "Отменено 1" [ref=e82] [cursor=pointer]:
+            - text: Отменено
+            - generic [ref=e83]: "1"
+          - generic [ref=e84]:
+            - button "Период" [ref=e86] [cursor=pointer]:
+              - img [ref=e87]
+              - text: Период
+            - generic [ref=e90]:
+              - img
+              - textbox "Поиск по названию…" [ref=e91]
+        - generic [ref=e92]:
+          - table [ref=e95]:
+            - rowgroup [ref=e96]:
+              - row "Название Дата Длительность Транскрибация Источник" [ref=e97]:
+                - columnheader [ref=e98]
+                - columnheader "Название" [ref=e99]
+                - columnheader "Дата" [ref=e100]
+                - columnheader "Длительность" [ref=e101]
+                - columnheader "Транскрибация" [ref=e102]
+                - columnheader "Источник" [ref=e103]
+                - columnheader [ref=e104]
+                - columnheader [ref=e105]
+            - rowgroup [ref=e106]:
+              - 'link "Открыть: Дейли" [ref=e107] [cursor=pointer]':
+                - cell "+3" [ref=e108]:
+                  - generic [ref=e114]: "+3"
+                - cell "Дейли" [ref=e115]:
+                  - generic "2026-07-08 12.05.53 Дейли" [ref=e117]: Дейли
+                - cell "8 июл, 12:05" [ref=e118]
+                - cell "15 мин 53 с" [ref=e119]
+                - cell "40 с" [ref=e120]
+                - cell "Transcribe_folder" [ref=e121]:
+                  - generic [ref=e122]:
+                    - img [ref=e123]
+                    - text: Transcribe_folder
+                - cell "Перетранскрибировать заново (перезапишет результат) Перетранскрибировать заново (перезапишет результат)" [ref=e125]:
+                  - generic [ref=e127]:
+                    - button "Перетранскрибировать заново (перезапишет результат)" [ref=e128]:
+                      - img [ref=e129]
+                    - tooltip "Перетранскрибировать заново (перезапишет результат)"
+                - cell [ref=e132]:
+                  - img [ref=e133]
+              - row "+3 Дейли отменено 8 июл, 12:05 15 мин 53 с 10 с Transcribe_folder Перетранскрибировать заново (перезапишет результат) Перетранскрибировать заново (перезапишет результат)" [ref=e135]:
+                - cell "+3" [ref=e136]:
+                  - generic [ref=e142]: "+3"
+                - cell "Дейли отменено" [ref=e143]:
+                  - generic [ref=e144]:
+                    - generic "2026-07-08 12.05.53 Дейли" [ref=e145]: Дейли
+                    - generic [ref=e146]: отменено
+                - cell "8 июл, 12:05" [ref=e147]
+                - cell "15 мин 53 с" [ref=e148]
+                - cell "10 с" [ref=e149]
+                - cell "Transcribe_folder" [ref=e150]:
+                  - generic [ref=e151]:
+                    - img [ref=e152]
+                    - text: Transcribe_folder
+                - cell "Перетранскрибировать заново (перезапишет результат) Перетранскрибировать заново (перезапишет результат)" [ref=e154]:
+                  - generic [ref=e156]:
+                    - button "Перетранскрибировать заново (перезапишет результат)" [ref=e157] [cursor=pointer]:
+                      - img [ref=e158]
+                    - tooltip "Перетранскрибировать заново (перезапишет результат)"
+                - cell [ref=e161]
+              - 'link "Открыть: Дейли" [ref=e162] [cursor=pointer]':
+                - cell "+3" [ref=e163]:
+                  - generic [ref=e169]: "+3"
+                - cell "Дейли" [ref=e170]:
+                  - generic "2026-07-08 12.05.53 Дейли" [ref=e172]: Дейли
+                - cell "8 июл, 12:05" [ref=e173]
+                - cell "15 мин 53 с" [ref=e174]
+                - cell "—" [ref=e175]
+                - cell "Transcribe_folder" [ref=e176]:
+                  - generic [ref=e177]:
+                    - img [ref=e178]
+                    - text: Transcribe_folder
+                - cell "Перетранскрибировать заново (перезапишет результат) Перетранскрибировать заново (перезапишет результат)" [ref=e180]:
+                  - generic [ref=e182]:
+                    - button "Перетранскрибировать заново (перезапишет результат)" [ref=e183]:
+                      - img [ref=e184]
+                    - tooltip "Перетранскрибировать заново (перезапишет результат)"
+                - cell [ref=e187]:
+                  - img [ref=e188]
+              - 'link "Открыть: Понимаю — ДиаЛаб" [ref=e190] [cursor=pointer]':
+                - cell "+1" [ref=e191]:
+                  - generic [ref=e197]: "+1"
+                - cell "Понимаю — ДиаЛаб" [ref=e198]:
+                  - generic "2026-07-01 17.03.01 Понимаю — ДиаЛаб" [ref=e200]: Понимаю — ДиаЛаб
+                - cell "1 июл, 17:03" [ref=e201]
+                - cell "23 мин 03 с" [ref=e202]
+                - cell "—" [ref=e203]
+                - cell "Transcribe_folder" [ref=e204]:
+                  - generic [ref=e205]:
+                    - img [ref=e206]
+                    - text: Transcribe_folder
+                - cell "Перетранскрибировать заново (перезапишет результат) Перетранскрибировать заново (перезапишет результат)" [ref=e208]:
+                  - generic [ref=e210]:
+                    - button "Перетранскрибировать заново (перезапишет результат)" [ref=e211]:
+                      - img [ref=e212]
+                    - tooltip "Перетранскрибировать заново (перезапишет результат)"
+                - cell [ref=e215]:
+                  - img [ref=e216]
+              - 'link "Открыть: Ponimaiu Meeting — Часть 2" [ref=e218] [cursor=pointer]':
+                - cell "+4" [ref=e219]:
+                  - generic [ref=e225]: "+4"
+                - cell "Ponimaiu Meeting — Часть 2" [ref=e226]:
+                  - generic "2026-06-04 11.34.32 Ponimaiu_ Meeting — Часть 2" [ref=e228]: Ponimaiu Meeting — Часть 2
+                - cell "4 июн, 11:34" [ref=e229]
+                - cell "32 мин 45 с" [ref=e230]
+                - cell "1 мин 29 с" [ref=e231]
+                - cell "Transcribe_folder" [ref=e232]:
+                  - generic [ref=e233]:
+                    - img [ref=e234]
+                    - text: Transcribe_folder
+                - cell "Перетранскрибировать заново (перезапишет результат) Перетранскрибировать заново (перезапишет результат)" [ref=e236]:
+                  - generic [ref=e238]:
+                    - button "Перетранскрибировать заново (перезапишет результат)" [ref=e239]:
+                      - img [ref=e240]
+                    - tooltip "Перетранскрибировать заново (перезапишет результат)"
+                - cell [ref=e243]:
+                  - img [ref=e244]
+              - 'link "Открыть: Ponimaiu Meeting" [ref=e246] [cursor=pointer]':
+                - cell "+5" [ref=e247]:
+                  - generic [ref=e253]: "+5"
+                - cell "Ponimaiu Meeting" [ref=e254]:
+                  - generic "2026-06-04 11.34.32 Ponimaiu_ Meeting" [ref=e256]: Ponimaiu Meeting
+                - cell "4 июн, 11:34" [ref=e257]
+                - cell "1 ч 25 мин" [ref=e258]
+                - cell "—" [ref=e259]
+                - cell "Transcribe_folder" [ref=e260]:
+                  - generic [ref=e261]:
+                    - img [ref=e262]
+                    - text: Transcribe_folder
+                - cell "Перетранскрибировать заново (перезапишет результат) Перетранскрибировать заново (перезапишет результат)" [ref=e264]:
+                  - generic [ref=e266]:
+                    - button "Перетранскрибировать заново (перезапишет результат)" [ref=e267]:
+                      - img [ref=e268]
+                    - tooltip "Перетранскрибировать заново (перезапишет результат)"
+                - cell [ref=e271]:
+                  - img [ref=e272]
+              - 'link "Открыть: Конференция Zoom Ponimaiu AI" [ref=e274] [cursor=pointer]':
+                - cell [ref=e275]:
+                  - img [ref=e278]
+                - cell "Конференция Zoom Ponimaiu AI" [ref=e281]:
+                  - generic "2026-05-13 19.16.26 Конференция Zoom Ponimaiu AI" [ref=e283]: Конференция Zoom Ponimaiu AI
+                - cell "13 мая, 19:16" [ref=e284]
+                - cell "1 ч 04 мин" [ref=e285]
+                - cell "—" [ref=e286]
+                - cell "Transcribe_folder" [ref=e287]:
+                  - generic [ref=e288]:
+                    - img [ref=e289]
+                    - text: Transcribe_folder
+                - cell "Перетранскрибировать заново (перезапишет результат) Перетранскрибировать заново (перезапишет результат)" [ref=e291]:
+                  - generic [ref=e293]:
+                    - button "Перетранскрибировать заново (перезапишет результат)" [ref=e294]:
+                      - img [ref=e295]
+                    - tooltip "Перетранскрибировать заново (перезапишет результат)"
+                - cell [ref=e298]:
+                  - img [ref=e299]
+          - paragraph [ref=e302]: Показано 7 из 7

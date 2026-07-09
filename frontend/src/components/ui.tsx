@@ -33,6 +33,70 @@ export function Button({
   );
 }
 
+/** Круглая иконка-действие с тултипом.
+
+Тултип рендерится position:fixed (поверх любых overflow-контейнеров — Card
+режет absolute) и ТОЛЬКО когда виден: скрытый absolute-спан раздувал
+scroll-область таблицы. Показ — с задержкой 400 мс. */
+export function IconButton({
+  label,
+  className,
+  children,
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
+  const ref = React.useRef<HTMLButtonElement>(null);
+  const timer = React.useRef<number>();
+  const [tip, setTip] = React.useState<{ x: number; y: number } | null>(null);
+
+  const show = () => {
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => {
+      const r = ref.current?.getBoundingClientRect();
+      if (r) setTip({ x: r.left + r.width / 2, y: r.top - 6 });
+    }, 400);
+  };
+  const hide = () => {
+    window.clearTimeout(timer.current);
+    setTip(null);
+  };
+  React.useEffect(() => () => window.clearTimeout(timer.current), []);
+
+  return (
+    <>
+      <button
+        ref={ref}
+        type="button"
+        aria-label={label}
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
+        className={cn(
+          "inline-flex h-9 w-9 items-center justify-center rounded-full outline-none transition-colors",
+          "text-ink-muted hover:bg-coral-soft hover:text-coral-500 focus-visible:bg-coral-soft",
+          "disabled:pointer-events-none disabled:opacity-45",
+          className,
+        )}
+        {...props}
+      >
+        {children}
+      </button>
+      {tip && (
+        <span
+          role="tooltip"
+          style={{ left: tip.x, top: tip.y }}
+          className={cn(
+            "pointer-events-none fixed z-50 -translate-x-1/2 -translate-y-full",
+            "whitespace-nowrap rounded-md bg-ink px-2 py-1 text-[11px] font-medium text-white shadow-soft",
+          )}
+        >
+          {label}
+        </span>
+      )}
+    </>
+  );
+}
+
 /* ─── Поля ───────────────────────────────────────────────────────────── */
 const fieldBase =
   "w-full rounded-control border border-line bg-white px-3 text-sm text-ink placeholder:text-ink-muted/60 " +

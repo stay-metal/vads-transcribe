@@ -300,7 +300,15 @@ function Viewer({
       <div className="sticky top-0 z-20 -mx-4 space-y-3 border-b border-line bg-canvas/95 px-4 py-3 backdrop-blur md:-mx-8 md:px-8">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-coral-500">Транскрипт</div>
+            <div className="flex items-center gap-2.5 font-mono text-[11px] uppercase tracking-[0.14em]">
+              <Link
+                to="/"
+                className="flex items-center gap-1 text-ink-muted transition-colors hover:text-coral-500"
+              >
+                ← К записям
+              </Link>
+              <span className="text-coral-500">Транскрипт</span>
+            </div>
             <h1 className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-lg font-semibold tracking-tightest text-ink">
               <span className="truncate" title={job.title ?? undefined}>{parseRecordingTitle(job.title).name || "Запись"}</span>
               <span className="flex items-center gap-x-2 text-xs font-normal text-ink-muted">

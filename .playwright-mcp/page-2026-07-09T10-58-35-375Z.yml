@@ -1,0 +1,50 @@
+- generic [ref=f3e3]:
+  - complementary [ref=f3e4]:
+    - link "bloodtranscripts Понимаю AI" [ref=f3e5] [cursor=pointer]:
+      - /url: /
+      - img [ref=f3e7]
+      - generic [ref=f3e14]:
+        - generic [ref=f3e15]: bloodtranscripts
+        - generic [ref=f3e16]: Понимаю AI
+    - navigation [ref=f3e17]:
+      - link "Записи" [ref=f3e18] [cursor=pointer]:
+        - /url: /
+        - img [ref=f3e19]
+        - text: Записи
+      - link "Загрузить" [ref=f3e22] [cursor=pointer]:
+        - /url: /upload
+        - img [ref=f3e23]
+        - text: Загрузить
+      - link "Источники" [ref=f3e26] [cursor=pointer]:
+        - /url: /sources
+        - img [ref=f3e27]
+        - text: Источники
+      - link "Словарь" [ref=f3e29] [cursor=pointer]:
+        - /url: /glossary
+        - img [ref=f3e30]
+        - text: Словарь
+      - link "Настройки" [ref=f3e33] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=f3e34]
+        - text: Настройки
+    - button "Выйти" [ref=f3e39] [cursor=pointer]:
+      - img [ref=f3e40]
+      - text: Выйти
+  - main [ref=f3e44]:
+    - generic [ref=f3e45]:
+      - generic [ref=f3e46]:
+        - generic [ref=f3e47]:
+          - generic [ref=f3e48]: Обработка
+          - heading "Записи" [level=1] [ref=f3e49]
+        - link "Новая запись" [ref=f3e50] [cursor=pointer]:
+          - /url: /upload
+          - button "Новая запись" [ref=f3e51]:
+            - img [ref=f3e52]
+            - text: Новая запись
+      - generic [ref=f3e57]:
+        - button "Период" [ref=f3e59] [cursor=pointer]:
+          - img [ref=f3e60]
+          - text: Период
+        - generic [ref=f3e63]:
+          - img
+          - textbox "Поиск по названию…" [ref=f3e64]

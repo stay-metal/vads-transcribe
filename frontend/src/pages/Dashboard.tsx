@@ -20,11 +20,12 @@ import {
   Button,
   Card,
   EmptyState,
+  IconButton,
   Input,
   SectionTitle,
   ErrorCard,
 } from "@/components/ui";
-import { IconMic, IconSearch, IconChevronRight } from "@/components/icons";
+import { IconMic, IconSearch, IconChevronRight, IconRefresh } from "@/components/icons";
 import { cn, MODE_LABEL, fmtDuration, fmtRelative, fmtMeetingTime, parseRecordingTitle } from "@/lib/utils";
 import { SOURCE_META, basename, processingSec, dayStartISO, dayEndISO } from "./dashboard/helpers";
 import { VoiceGlyph } from "./dashboard/VoiceGlyph";
@@ -176,21 +177,19 @@ function RerunCell({ job }: { job: Job }) {
   });
   if (!["done", "error", "canceled"].includes(job.state)) return null;
   return (
-    <span className="flex flex-col items-end gap-0.5">
-      <Button
-        variant="ghost"
-        size="sm"
-        className="whitespace-nowrap"
-        title="Перетранскрибировать заново (свежий результат перезапишет текущий)"
-        onClick={(e) => {
-          e.stopPropagation();
-          mut.mutate();
-        }}
+    // stopPropagation на обёртке: строка таблицы кликабельна (переход к транскрипту)
+    <span className="flex items-center justify-end" onClick={(e) => e.stopPropagation()}>
+      <IconButton
+        label={
+          mut.isError
+            ? "Не удалось — попробовать ещё раз"
+            : "Перетранскрибировать заново (перезапишет результат)"
+        }
+        onClick={() => mut.mutate()}
         disabled={mut.isPending}
       >
-        {mut.isPending ? "Ставим…" : "Заново"}
-      </Button>
-      {mut.isError && <span className="text-xs text-coral-600">не удалось</span>}
+        <IconRefresh size={16} className={mut.isPending ? "animate-spin" : undefined} />
+      </IconButton>
     </span>
   );
 }
@@ -253,6 +252,11 @@ function RecordsTable({ data }: { data: Job[] }) {
                         "px-4 py-3 align-middle",
                         RIGHT_COLS.has(c.column.id) && "text-right",
                         META_COLS.has(c.column.id) && "w-px",
+                        // Название поглощает свободную ширину и обрезается — иначе
+                        // длинное имя распирает таблицу шире контейнера (гориз. скролл,
+                        // колонки действий уезжают за край).
+                        c.column.id === "title" && "w-full max-w-0",
+                        c.column.id !== "title" && "whitespace-nowrap",
                       )}
                     >
                       {flexRender(c.column.columnDef.cell, c.getContext())}

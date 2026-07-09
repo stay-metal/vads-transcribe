@@ -2,8 +2,8 @@ import * as React from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type { Job, JobsPage } from "@/api/types";
-import { Badge, Button, Card, StageBar, StatusPill, Mono } from "@/components/ui";
-import { IconChevronDown, IconChevronRight } from "@/components/icons";
+import { Badge, Card, IconButton, Spinner, StageBar, StatusPill, Mono } from "@/components/ui";
+import { IconChevronDown, IconChevronRight, IconPause, IconPlay, IconX } from "@/components/icons";
 import { MODE_LABEL, STATUS_META, fmtDuration, fmtDateTime, parseRecordingTitle } from "@/lib/utils";
 import { VoiceGlyph } from "./VoiceGlyph";
 import { SOURCE_META, estimate, queueWait, fmtElapsed, fmtEta } from "./helpers";
@@ -35,9 +35,20 @@ export function ActiveJobCard({ job, page, now }: { job: Job; page: JobsPage; no
     if (est.speed && est.speed > 1.5) statusBits.push(`${Math.round(est.speed)}× реального времени`);
   }
 
+  const failed = cancelMut.isError || pauseMut.isError || resumeMut.isError;
+  const label = (base: string) => (failed ? `${base} (не удалось — ещё раз)` : base);
+
   return (
     <Card className="overflow-hidden transition-shadow hover:shadow-lift">
-      <button className="flex w-full items-start gap-3 p-4 text-left" onClick={() => setOpen((v) => !v)}>
+      {/* Шапка — div c ролью кнопки: внутри живут настоящие кнопки-действия
+          (вложенный <button> в <button> невалиден). */}
+      <div
+        role="button"
+        tabIndex={0}
+        className="flex w-full cursor-pointer items-start gap-3 p-4 text-left outline-none"
+        onClick={() => setOpen((v) => !v)}
+        onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && setOpen((v) => !v)}
+      >
         <div className="mt-0.5">
           <VoiceGlyph job={job} size="lg" />
         </div>
@@ -54,8 +65,52 @@ export function ActiveJobCard({ job, page, now }: { job: Job; page: JobsPage; no
             </p>
           </div>
         </div>
-        <Chevron size={16} className="mt-1 shrink-0 text-ink-muted" />
-      </button>
+        {/* Действия — иконки с тултипами, по центру высоты карточки;
+            клики не сворачивают/разворачивают её */}
+        <div
+          className="flex shrink-0 items-center gap-1.5 self-center"
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          {job.state === "queued" && (
+            <IconButton
+              label={label("Поставить на паузу")}
+              onClick={() => pauseMut.mutate()}
+              disabled={pauseMut.isPending}
+            >
+              <IconPause size={18} />
+            </IconButton>
+          )}
+          {job.state === "paused" && (
+            <IconButton
+              label={label("Возобновить")}
+              onClick={() => resumeMut.mutate()}
+              disabled={resumeMut.isPending}
+            >
+              <IconPlay size={18} />
+            </IconButton>
+          )}
+          {job.state === "canceling" ? (
+            <IconButton label="Отменяется — ждём безопасную точку…" disabled>
+              <Spinner className="h-4 w-4" />
+            </IconButton>
+          ) : (
+            <IconButton
+              label={label("Отменить")}
+              onClick={() => cancelMut.mutate()}
+              disabled={cancelMut.isPending}
+            >
+              <IconX size={18} />
+            </IconButton>
+          )}
+          <IconButton
+            label={open ? "Свернуть" : "Подробнее"}
+            onClick={() => setOpen((v) => !v)}
+          >
+            <Chevron size={18} />
+          </IconButton>
+        </div>
+      </div>
 
       {open && (
         <div className="border-t border-line bg-canvas/50 px-4 py-4">
@@ -88,46 +143,9 @@ export function ActiveJobCard({ job, page, now }: { job: Job; page: JobsPage; no
             <p className="text-xs text-ink-muted">
               Можно закрыть страницу — обработка продолжится на сервере.
             </p>
-            <div className="flex flex-col items-end gap-1">
-              <div className="flex items-center gap-2">
-                {job.state === "queued" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => pauseMut.mutate()}
-                    disabled={pauseMut.isPending}
-                  >
-                    {pauseMut.isPending ? "Ставим…" : "Пауза"}
-                  </Button>
-                )}
-                {job.state === "paused" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => resumeMut.mutate()}
-                    disabled={resumeMut.isPending}
-                  >
-                    {resumeMut.isPending ? "Возобновляем…" : "Возобновить"}
-                  </Button>
-                )}
-                {job.state !== "canceling" && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => cancelMut.mutate()}
-                    disabled={cancelMut.isPending}
-                  >
-                    {cancelMut.isPending ? "Отменяем…" : "Отменить"}
-                  </Button>
-                )}
-              </div>
-              {(cancelMut.isError || pauseMut.isError || resumeMut.isError) && (
-                <span className="text-xs text-coral-600">Не удалось выполнить действие</span>
-              )}
-              {job.state === "canceling" && (
-                <span className="text-xs text-ink-muted">Отменяется — ждём безопасную точку…</span>
-              )}
-            </div>
+            {failed && (
+              <span className="text-xs text-coral-600">Не удалось выполнить действие</span>
+            )}
           </div>
         </div>
       )}

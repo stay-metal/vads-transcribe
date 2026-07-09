@@ -61,6 +61,13 @@ export const IconDownload = (p: P) => (
   </Svg>
 );
 
+export const IconRefresh = (p: P) => (
+  <Svg {...p}>
+    <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+    <path d="M21 3v5h-5" />
+  </Svg>
+);
+
 export const IconPlay = (p: P) => (
   <Svg {...p}>
     <path d="M7 5.5v13l11-6.5-11-6.5Z" fill="currentColor" stroke="none" />
