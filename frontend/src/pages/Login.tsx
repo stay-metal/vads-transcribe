@@ -33,9 +33,9 @@ export default function Login() {
       <div className="w-full max-w-sm animate-fade-up">
         <div className="mb-8 flex flex-col items-center text-center">
           <AtomBadge size={56} className="mb-4" />
-          <h1 className="text-2xl font-semibold tracking-tightest text-ink">bloodtranscripts</h1>
+          <h1 className="text-2xl font-semibold tracking-tightest text-ink">BloodAgents</h1>
           <p className="mt-1 font-mono text-[11px] uppercase tracking-[0.16em] text-ink-muted">
-            Понимаю AI
+            Транскрибация
           </p>
           <p className="mt-4 text-[15px] leading-snug text-ink-muted">
             Расшифровка созвонов с именами участников.

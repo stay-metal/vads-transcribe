@@ -30,7 +30,7 @@ export function Layout() {
       <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-line bg-white/70 backdrop-blur md:flex">
         <NavLink to="/" className="flex items-center gap-2.5 px-5 py-5">
           <AtomBadge size={34} />
-          <Wordmark eyebrow />
+          <Wordmark />
         </NavLink>
 
         <nav className="flex-1 space-y-1 px-3 py-2">

@@ -1,0 +1,12 @@
+- generic [ref=f8e4]:
+  - generic [ref=f8e5]:
+    - img [ref=f8e7]
+    - heading "BloodAgents" [level=1] [ref=f8e16]
+    - paragraph [ref=f8e17]: Транскрибация
+    - paragraph [ref=f8e18]:
+      - text: Расшифровка созвонов с именами участников.
+      - text: Каждый голос — на своём месте.
+  - generic [ref=f8e20]:
+    - textbox "Пользователь" [ref=f8e21]: admin
+    - textbox "Пароль" [ref=f8e22]
+    - button "Войти" [ref=f8e23] [cursor=pointer]

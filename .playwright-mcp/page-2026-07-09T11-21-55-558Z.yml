@@ -1,0 +1,336 @@
+- generic [ref=f7e3]:
+  - complementary [ref=f7e4]:
+    - link "BloodAgents Транскрибация" [ref=f7e5] [cursor=pointer]:
+      - /url: /
+      - img [ref=f7e7]
+      - generic [ref=f7e16]:
+        - generic [ref=f7e17]: BloodAgents
+        - generic [ref=f7e18]: Транскрибация
+    - navigation [ref=f7e19]:
+      - link "Записи" [ref=f7e20] [cursor=pointer]:
+        - /url: /
+        - img [ref=f7e21]
+        - text: Записи
+      - link "Загрузить" [ref=f7e24] [cursor=pointer]:
+        - /url: /upload
+        - img [ref=f7e25]
+        - text: Загрузить
+      - link "Источники" [ref=f7e28] [cursor=pointer]:
+        - /url: /sources
+        - img [ref=f7e29]
+        - text: Источники
+      - link "Словарь" [ref=f7e31] [cursor=pointer]:
+        - /url: /glossary
+        - img [ref=f7e32]
+        - text: Словарь
+      - link "Настройки" [ref=f7e35] [cursor=pointer]:
+        - /url: /settings
+        - img [ref=f7e36]
+        - text: Настройки
+    - button "Выйти" [ref=f7e41] [cursor=pointer]:
+      - img [ref=f7e42]
+      - text: Выйти
+  - main [ref=f7e46]:
+    - generic [ref=f7e47]:
+      - generic [ref=f7e48]:
+        - generic [ref=f7e49]:
+          - generic [ref=f7e50]: Обработка
+          - heading "Записи" [level=1] [ref=f7e51]
+        - link "Новая запись" [ref=f7e52] [cursor=pointer]:
+          - /url: /upload
+          - button "Новая запись" [ref=f7e53]:
+            - img [ref=f7e54]
+            - text: Новая запись
+      - generic [ref=f7e57]:
+        - generic [ref=f7e58]:
+          - button "Все 15" [ref=f7e59] [cursor=pointer]:
+            - text: Все
+            - generic [ref=f7e60]: "15"
+          - button "Готово 12" [ref=f7e61] [cursor=pointer]:
+            - text: Готово
+            - generic [ref=f7e62]: "12"
+          - button "Ошибки 0" [ref=f7e63] [cursor=pointer]:
+            - text: Ошибки
+            - generic [ref=f7e64]: "0"
+          - button "Отменено 3" [ref=f7e65] [cursor=pointer]:
+            - text: Отменено
+            - generic [ref=f7e66]: "3"
+          - generic [ref=f7e67]:
+            - button "Период" [ref=f7e69] [cursor=pointer]:
+              - img [ref=f7e70]
+              - text: Период
+            - generic [ref=f7e73]:
+              - img
+              - textbox "Поиск по названию…" [ref=f7e74]
+        - generic [ref=f7e75]:
+          - table [ref=f7e78]:
+            - rowgroup [ref=f7e79]:
+              - row "Название Дата Длительность Транскрибация Источник" [ref=f7e80]:
+                - columnheader [ref=f7e81]
+                - columnheader "Название" [ref=f7e82]
+                - columnheader "Дата" [ref=f7e83]
+                - columnheader "Длительность" [ref=f7e84]
+                - columnheader "Транскрибация" [ref=f7e85]
+                - columnheader "Источник" [ref=f7e86]
+                - columnheader [ref=f7e87]
+                - columnheader [ref=f7e88]
+            - rowgroup [ref=f7e89]:
+              - row "Проверка интерфейса отменено 7 мин назад 2 мин 00 с — Загрузка Перезапустить" [ref=f7e90]:
+                - cell [ref=f7e91]:
+                  - img [ref=f7e94]
+                - cell "Проверка интерфейса отменено" [ref=f7e97]:
+                  - generic [ref=f7e98]:
+                    - generic "Проверка интерфейса" [ref=f7e99]
+                    - generic [ref=f7e100]: отменено
+                - cell "7 мин назад" [ref=f7e101]
+                - cell "2 мин 00 с" [ref=f7e102]
+                - cell "—" [ref=f7e103]
+                - cell "Загрузка" [ref=f7e104]:
+                  - generic [ref=f7e105]:
+                    - img [ref=f7e106]
+                    - text: Загрузка
+                - cell "Перезапустить" [ref=f7e109]:
+                  - button "Перезапустить" [ref=f7e111] [cursor=pointer]:
+                    - img [ref=f7e112]
+                - cell [ref=f7e115]
+              - row "Проверка интерфейса отменено 23 мин назад 2 мин 00 с — Загрузка Перезапустить" [ref=f7e116]:
+                - cell [ref=f7e117]:
+                  - img [ref=f7e120]
+                - cell "Проверка интерфейса отменено" [ref=f7e123]:
+                  - generic [ref=f7e124]:
+                    - generic "Проверка интерфейса" [ref=f7e125]
+                    - generic [ref=f7e126]: отменено
+                - cell "23 мин назад" [ref=f7e127]
+                - cell "2 мин 00 с" [ref=f7e128]
+                - cell "—" [ref=f7e129]
+                - cell "Загрузка" [ref=f7e130]:
+                  - generic [ref=f7e131]:
+                    - img [ref=f7e132]
+                    - text: Загрузка
+                - cell "Перезапустить" [ref=f7e135]:
+                  - button "Перезапустить" [ref=f7e137] [cursor=pointer]:
+                    - img [ref=f7e138]
+                - cell [ref=f7e141]
+              - 'link "Открыть: Проверка интерфейса" [ref=f7e142] [cursor=pointer]':
+                - cell [ref=f7e143]:
+                  - img [ref=f7e146]
+                - cell "Проверка интерфейса" [ref=f7e149]:
+                  - generic "Проверка интерфейса" [ref=f7e151]
+                - cell "23 мин назад" [ref=f7e152]
+                - cell "2 мин 00 с" [ref=f7e153]
+                - cell "9 с" [ref=f7e154]
+                - cell "Загрузка" [ref=f7e155]:
+                  - generic [ref=f7e156]:
+                    - img [ref=f7e157]
+                    - text: Загрузка
+                - cell "Перезапустить" [ref=f7e160]:
+                  - button "Перезапустить" [ref=f7e162]:
+                    - img [ref=f7e163]
+                - cell [ref=f7e166]:
+                  - img [ref=f7e167]
+              - 'link "Открыть: Проверка интерфейса" [ref=f7e169] [cursor=pointer]':
+                - cell [ref=f7e170]:
+                  - img [ref=f7e173]
+                - cell "Проверка интерфейса" [ref=f7e176]:
+                  - generic "Проверка интерфейса" [ref=f7e178]
+                - cell "25 мин назад" [ref=f7e179]
+                - cell "2 мин 00 с" [ref=f7e180]
+                - cell "10 с" [ref=f7e181]
+                - cell "Загрузка" [ref=f7e182]:
+                  - generic [ref=f7e183]:
+                    - img [ref=f7e184]
+                    - text: Загрузка
+                - cell "Перезапустить" [ref=f7e187]:
+                  - button "Перезапустить" [ref=f7e189]:
+                    - img [ref=f7e190]
+                - cell [ref=f7e193]:
+                  - img [ref=f7e194]
+              - 'link "Открыть: Понимаю — ДиаЛаб" [ref=f7e196] [cursor=pointer]':
+                - cell "+1" [ref=f7e197]:
+                  - generic [ref=f7e203]: "+1"
+                - cell "Понимаю — ДиаЛаб" [ref=f7e204]:
+                  - generic "2026-07-01 17.03.01 Понимаю — ДиаЛаб" [ref=f7e206]: Понимаю — ДиаЛаб
+                - cell "1 июл, 17:03" [ref=f7e207]
+                - cell "23 мин 03 с" [ref=f7e208]
+                - cell "52 с" [ref=f7e209]
+                - cell "Transcribe_folder" [ref=f7e210]:
+                  - generic [ref=f7e211]:
+                    - img [ref=f7e212]
+                    - text: Transcribe_folder
+                - cell "Перезапустить" [ref=f7e214]:
+                  - button "Перезапустить" [ref=f7e216]:
+                    - img [ref=f7e217]
+                - cell [ref=f7e220]:
+                  - img [ref=f7e221]
+              - 'link "Открыть: Проверка интерфейса" [ref=f7e223] [cursor=pointer]':
+                - cell [ref=f7e224]:
+                  - img [ref=f7e227]
+                - cell "Проверка интерфейса" [ref=f7e230]:
+                  - generic "Проверка интерфейса" [ref=f7e232]
+                - cell "26 мин назад" [ref=f7e233]
+                - cell "2 мин 00 с" [ref=f7e234]
+                - cell "10 с" [ref=f7e235]
+                - cell "Загрузка" [ref=f7e236]:
+                  - generic [ref=f7e237]:
+                    - img [ref=f7e238]
+                    - text: Загрузка
+                - cell "Перезапустить" [ref=f7e241]:
+                  - button "Перезапустить" [ref=f7e243]:
+                    - img [ref=f7e244]
+                - cell [ref=f7e247]:
+                  - img [ref=f7e248]
+              - 'link "Открыть: Проверка интерфейса" [ref=f7e250] [cursor=pointer]':
+                - cell [ref=f7e251]:
+                  - img [ref=f7e254]
+                - cell "Проверка интерфейса" [ref=f7e257]:
+                  - generic "Проверка интерфейса" [ref=f7e259]
+                - cell "26 мин назад" [ref=f7e260]
+                - cell "2 мин 00 с" [ref=f7e261]
+                - cell "9 с" [ref=f7e262]
+                - cell "Загрузка" [ref=f7e263]:
+                  - generic [ref=f7e264]:
+                    - img [ref=f7e265]
+                    - text: Загрузка
+                - cell "Перезапустить" [ref=f7e268]:
+                  - button "Перезапустить" [ref=f7e270]:
+                    - img [ref=f7e271]
+                - cell [ref=f7e274]:
+                  - img [ref=f7e275]
+              - 'link "Открыть: Проверка интерфейса" [ref=f7e277] [cursor=pointer]':
+                - cell [ref=f7e278]:
+                  - img [ref=f7e281]
+                - cell "Проверка интерфейса" [ref=f7e284]:
+                  - generic "Проверка интерфейса" [ref=f7e286]
+                - cell "27 мин назад" [ref=f7e287]
+                - cell "2 мин 00 с" [ref=f7e288]
+                - cell "12 с" [ref=f7e289]
+                - cell "Загрузка" [ref=f7e290]:
+                  - generic [ref=f7e291]:
+                    - img [ref=f7e292]
+                    - text: Загрузка
+                - cell "Перезапустить" [ref=f7e295]:
+                  - button "Перезапустить" [ref=f7e297]:
+                    - img [ref=f7e298]
+                - cell [ref=f7e301]:
+                  - img [ref=f7e302]
+              - 'link "Открыть: Дейли" [ref=f7e304] [cursor=pointer]':
+                - cell "+3" [ref=f7e305]:
+                  - generic [ref=f7e311]: "+3"
+                - cell "Дейли" [ref=f7e312]:
+                  - generic "2026-07-08 12.05.53 Дейли" [ref=f7e314]: Дейли
+                - cell "8 июл, 12:05" [ref=f7e315]
+                - cell "15 мин 53 с" [ref=f7e316]
+                - cell "40 с" [ref=f7e317]
+                - cell "Transcribe_folder" [ref=f7e318]:
+                  - generic [ref=f7e319]:
+                    - img [ref=f7e320]
+                    - text: Transcribe_folder
+                - cell "Перезапустить" [ref=f7e322]:
+                  - button "Перезапустить" [ref=f7e324]:
+                    - img [ref=f7e325]
+                - cell [ref=f7e328]:
+                  - img [ref=f7e329]
+              - row "+3 Дейли отменено 8 июл, 12:05 15 мин 53 с 10 с Transcribe_folder Перезапустить" [ref=f7e331]:
+                - cell "+3" [ref=f7e332]:
+                  - generic [ref=f7e338]: "+3"
+                - cell "Дейли отменено" [ref=f7e339]:
+                  - generic [ref=f7e340]:
+                    - generic "2026-07-08 12.05.53 Дейли" [ref=f7e341]: Дейли
+                    - generic [ref=f7e342]: отменено
+                - cell "8 июл, 12:05" [ref=f7e343]
+                - cell "15 мин 53 с" [ref=f7e344]
+                - cell "10 с" [ref=f7e345]
+                - cell "Transcribe_folder" [ref=f7e346]:
+                  - generic [ref=f7e347]:
+                    - img [ref=f7e348]
+                    - text: Transcribe_folder
+                - cell "Перезапустить" [ref=f7e350]:
+                  - button "Перезапустить" [ref=f7e352] [cursor=pointer]:
+                    - img [ref=f7e353]
+                - cell [ref=f7e356]
+              - 'link "Открыть: Дейли" [ref=f7e357] [cursor=pointer]':
+                - cell "+3" [ref=f7e358]:
+                  - generic [ref=f7e364]: "+3"
+                - cell "Дейли" [ref=f7e365]:
+                  - generic "2026-07-08 12.05.53 Дейли" [ref=f7e367]: Дейли
+                - cell "8 июл, 12:05" [ref=f7e368]
+                - cell "15 мин 53 с" [ref=f7e369]
+                - cell "—" [ref=f7e370]
+                - cell "Transcribe_folder" [ref=f7e371]:
+                  - generic [ref=f7e372]:
+                    - img [ref=f7e373]
+                    - text: Transcribe_folder
+                - cell "Перезапустить" [ref=f7e375]:
+                  - button "Перезапустить" [ref=f7e377]:
+                    - img [ref=f7e378]
+                - cell [ref=f7e381]:
+                  - img [ref=f7e382]
+              - 'link "Открыть: Понимаю — ДиаЛаб" [ref=f7e384] [cursor=pointer]':
+                - cell "+1" [ref=f7e385]:
+                  - generic [ref=f7e391]: "+1"
+                - cell "Понимаю — ДиаЛаб" [ref=f7e392]:
+                  - generic "2026-07-01 17.03.01 Понимаю — ДиаЛаб" [ref=f7e394]: Понимаю — ДиаЛаб
+                - cell "1 июл, 17:03" [ref=f7e395]
+                - cell "23 мин 03 с" [ref=f7e396]
+                - cell "—" [ref=f7e397]
+                - cell "Transcribe_folder" [ref=f7e398]:
+                  - generic [ref=f7e399]:
+                    - img [ref=f7e400]
+                    - text: Transcribe_folder
+                - cell "Перезапустить" [ref=f7e402]:
+                  - button "Перезапустить" [ref=f7e404]:
+                    - img [ref=f7e405]
+                - cell [ref=f7e408]:
+                  - img [ref=f7e409]
+              - 'link "Открыть: Ponimaiu Meeting — Часть 2" [ref=f7e411] [cursor=pointer]':
+                - cell "+4" [ref=f7e412]:
+                  - generic [ref=f7e418]: "+4"
+                - cell "Ponimaiu Meeting — Часть 2" [ref=f7e419]:
+                  - generic "2026-06-04 11.34.32 Ponimaiu_ Meeting — Часть 2" [ref=f7e421]: Ponimaiu Meeting — Часть 2
+                - cell "4 июн, 11:34" [ref=f7e422]
+                - cell "32 мин 45 с" [ref=f7e423]
+                - cell "1 мин 29 с" [ref=f7e424]
+                - cell "Transcribe_folder" [ref=f7e425]:
+                  - generic [ref=f7e426]:
+                    - img [ref=f7e427]
+                    - text: Transcribe_folder
+                - cell "Перезапустить" [ref=f7e429]:
+                  - button "Перезапустить" [ref=f7e431]:
+                    - img [ref=f7e432]
+                - cell [ref=f7e435]:
+                  - img [ref=f7e436]
+              - 'link "Открыть: Ponimaiu Meeting" [ref=f7e438] [cursor=pointer]':
+                - cell "+5" [ref=f7e439]:
+                  - generic [ref=f7e445]: "+5"
+                - cell "Ponimaiu Meeting" [ref=f7e446]:
+                  - generic "2026-06-04 11.34.32 Ponimaiu_ Meeting" [ref=f7e448]: Ponimaiu Meeting
+                - cell "4 июн, 11:34" [ref=f7e449]
+                - cell "1 ч 25 мин" [ref=f7e450]
+                - cell "—" [ref=f7e451]
+                - cell "Transcribe_folder" [ref=f7e452]:
+                  - generic [ref=f7e453]:
+                    - img [ref=f7e454]
+                    - text: Transcribe_folder
+                - cell "Перезапустить" [ref=f7e456]:
+                  - button "Перезапустить" [ref=f7e458]:
+                    - img [ref=f7e459]
+                - cell [ref=f7e462]:
+                  - img [ref=f7e463]
+              - 'link "Открыть: Конференция Zoom Ponimaiu AI" [ref=f7e465] [cursor=pointer]':
+                - cell [ref=f7e466]:
+                  - img [ref=f7e469]
+                - cell "Конференция Zoom Ponimaiu AI" [ref=f7e472]:
+                  - generic "2026-05-13 19.16.26 Конференция Zoom Ponimaiu AI" [ref=f7e474]: Конференция Zoom Ponimaiu AI
+                - cell "13 мая, 19:16" [ref=f7e475]
+                - cell "1 ч 04 мин" [ref=f7e476]
+                - cell "—" [ref=f7e477]
+                - cell "Transcribe_folder" [ref=f7e478]:
+                  - generic [ref=f7e479]:
+                    - img [ref=f7e480]
+                    - text: Transcribe_folder
+                - cell "Перезапустить" [ref=f7e482]:
+                  - button "Перезапустить" [ref=f7e484]:
+                    - img [ref=f7e485]
+                - cell [ref=f7e488]:
+                  - img [ref=f7e489]
+          - paragraph [ref=f7e492]: Показано 15 из 15
