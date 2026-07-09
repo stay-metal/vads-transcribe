@@ -38,7 +38,7 @@ export function AtomBadge({ size = 36, className }: { size?: number; className?:
       className={cn("inline-grid place-items-center bg-coral text-white shadow-soft", className)}
       style={{ width: size, height: size, borderRadius: size * 0.28 }}
     >
-      <AtomMark style={{ width: size * 0.72, height: size * 0.72 }} />
+      <AtomMark style={{ width: size * 0.86, height: size * 0.86 }} />
     </span>
   );
 }
@@ -48,7 +48,7 @@ export function Wordmark() {
   return (
     <span className="flex flex-col leading-none">
       <span className="text-[15px] font-semibold tracking-tightest text-ink">BloodAgents</span>
-      <span className="mt-0.5 text-[10px] font-medium uppercase tracking-[0.14em] text-ink-muted">
+      <span className="mt-[3px] text-[10px] font-medium uppercase tracking-[0.14em] text-ink-muted">
         Транскрибация
       </span>
     </span>
