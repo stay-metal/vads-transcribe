@@ -68,6 +68,19 @@ export const IconRefresh = (p: P) => (
   </Svg>
 );
 
+export const IconArrowLeft = (p: P) => (
+  <Svg {...p}>
+    <path d="M19 12H5m0 0 6-6m-6 6 6 6" />
+  </Svg>
+);
+
+export const IconPen = (p: P) => (
+  <Svg {...p}>
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+  </Svg>
+);
+
 export const IconPlay = (p: P) => (
   <Svg {...p}>
     <path d="M7 5.5v13l11-6.5-11-6.5Z" fill="currentColor" stroke="none" />
@@ -137,6 +150,14 @@ export const IconUsers = (p: P) => (
     <path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
     <path d="M16 5.5a3 3 0 0 1 0 5.8M17.5 19a5.5 5.5 0 0 0-2.5-4.6" />
   </Svg>
+);
+
+/** Залитый силуэт спикера (fill=currentColor) — цвет задаётся через `style.color`. */
+export const IconUserSolid = ({ size = 18, ...rest }: P) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...rest}>
+    <circle cx="12" cy="8" r="3.6" />
+    <path d="M12 13.4c-3.9 0-7 2.2-7 5.1 0 .83.67 1.5 1.5 1.5h11c.83 0 1.5-.67 1.5-1.5 0-2.9-3.1-5.1-7-5.1Z" />
+  </svg>
 );
 
 export const IconSearch = (p: P) => (

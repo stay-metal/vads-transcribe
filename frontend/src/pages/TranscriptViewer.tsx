@@ -11,6 +11,7 @@ import {
   Button,
   Card,
   ErrorCard,
+  IconButton,
   Loading,
   Spinner,
   StageBar,
@@ -18,7 +19,18 @@ import {
   Mono,
   Toggle,
 } from "@/components/ui";
-import { IconPlay, IconPause, IconDownload, IconCheck, IconX, IconBook } from "@/components/icons";
+import {
+  IconPlay,
+  IconPause,
+  IconDownload,
+  IconRefresh,
+  IconCheck,
+  IconX,
+  IconBook,
+  IconSearch,
+  IconPen,
+  IconUserSolid,
+} from "@/components/icons";
 import { cn, fmtTime, parseRecordingTitle, SPEAKER_COLORS, ACTIVE_STATES, STATUS_META } from "@/lib/utils";
 
 /** provenance → русская метка + тон бейджа. */
@@ -37,6 +49,60 @@ const EXPORTS = [
   { fmt: "srt", label: "SRT", hint: "Субтитры" },
   { fmt: "vtt", label: "VTT", hint: "Веб-субтитры" },
 ] as const;
+
+/** «Скачать» — иконка-кнопка, по клику раскрывает меню форматов. */
+function DownloadMenu({ jobId }: { jobId: string }) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    // Клик по самой иконке внутри ref не закрывает (mousedown → click → toggle).
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <IconButton
+        label="Скачать"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className={cn(open && "bg-coral-soft text-coral-500")}
+      >
+        <IconDownload size={18} />
+      </IconButton>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-full z-30 mt-1.5 w-44 overflow-hidden rounded-card border border-line bg-white p-1 shadow-lift"
+        >
+          {EXPORTS.map((e) => (
+            <a
+              key={e.fmt}
+              href={api.downloadUrl(jobId, e.fmt)}
+              onClick={() => setOpen(false)}
+              role="menuitem"
+              title={e.hint}
+              className="block rounded-control px-3 py-1.5 text-sm text-ink transition-colors hover:bg-coral-soft hover:text-coral-600"
+            >
+              {e.label}
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function TranscriptViewer() {
   const { jobId } = useParams<{ jobId: string }>();
@@ -272,15 +338,26 @@ function Viewer({
   }
 
   // Выделение текста в репликах → плавающая кнопка «Внести в словарь».
-  function onMouseUp() {
+  function onMouseUp(e: React.MouseEvent) {
+    // В режиме правки выделяют текст в textarea — к словарю это не относится,
+    // а его rect вырожден (0×0), отчего кнопка улетала в левый верхний угол.
+    if ((e.target as HTMLElement).closest("textarea, input, [contenteditable='true']")) {
+      setSel(null);
+      return;
+    }
     const s = window.getSelection();
     const text = s?.toString().trim() ?? "";
-    if (text && text.length <= 90 && s && s.rangeCount) {
-      const r = s.getRangeAt(0).getBoundingClientRect();
-      setSel({ text, x: r.left + r.width / 2, y: r.top });
-    } else {
+    if (!text || text.length > 90 || !s || !s.rangeCount) {
       setSel(null);
+      return;
     }
+    const r = s.getRangeAt(0).getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) {
+      setSel(null); // вырожденное выделение (поле формы) — не показываем
+      return;
+    }
+    // Страничные координаты (со скроллом): кнопка держится за текст, а не за экран.
+    setSel({ text, x: r.left + r.width / 2 + window.scrollX, y: r.top + window.scrollY });
   }
 
   // Спикеры, ключуемые СЫРЫМ ярлыком (стабильно для повторной правки/цвета).
@@ -298,17 +375,9 @@ function Viewer({
     <div className="space-y-4">
       {/* Липкий верх: шапка + действия + волна + контролы (реплики скроллятся под ним) */}
       <div className="sticky top-0 z-20 -mx-4 space-y-3 border-b border-line bg-canvas/95 px-4 py-3 backdrop-blur md:-mx-8 md:px-8">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2.5 font-mono text-[11px] uppercase tracking-[0.14em]">
-              <Link
-                to="/"
-                className="flex items-center gap-1 text-ink-muted transition-colors hover:text-coral-500"
-              >
-                ← К записям
-              </Link>
-              <span className="text-coral-500">Транскрипт</span>
-            </div>
+        <div className="flex items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-coral-500">Транскрипт</div>
             <h1 className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-lg font-semibold tracking-tightest text-ink">
               <span className="truncate" title={job.title ?? undefined}>{parseRecordingTitle(job.title).name || "Запись"}</span>
               <span className="flex items-center gap-x-2 text-xs font-normal text-ink-muted">
@@ -318,20 +387,11 @@ function Viewer({
               </span>
             </h1>
           </div>
-          {/* Скачать + обновить файл — в одной плашке */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="mr-0.5 inline-flex items-center gap-1 font-mono text-[11px] uppercase tracking-[0.1em] text-ink-muted">
-              <IconDownload size={13} /> Скачать
-            </span>
-            {EXPORTS.map((e) => (
-              <a key={e.fmt} href={api.downloadUrl(jobId, e.fmt)} title={e.hint}>
-                <Button variant="outline" size="sm">
-                  {e.label}
-                </Button>
-              </a>
-            ))}
+          {/* Скачать (дропдаун форматов) + обновить файл */}
+          <div className="flex shrink-0 items-center gap-1.5">
+            <DownloadMenu jobId={jobId} />
             <Button size="sm" variant="subtle" onClick={writeFile} title="Записать правки в файл транскрипта на диске">
-              Обновить файл
+              <IconRefresh size={15} /> Обновить файл
             </Button>
           </div>
         </div>
@@ -340,32 +400,41 @@ function Viewer({
         <div ref={waveRef} className="viewer-wave" />
 
         {/* Контролы */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-3">
           <Button size="sm" onClick={() => wsRef.current?.playPause()}>
             {playing ? <IconPause size={16} /> : <IconPlay size={16} />}
             {playing ? "Пауза" : "Играть"}
           </Button>
-          <Mono>
-            {fmtTime(now)}
-            {dur != null ? ` / ${fmtTime(dur)}` : ""}
-          </Mono>
-          <div className="ml-1 inline-flex overflow-hidden rounded-control border border-line">
-            <button
-              onClick={() => zoom(1 / 1.6)}
-              className="px-2.5 py-1 text-sm text-ink-muted hover:bg-canvas hover:text-ink"
-              title="Отдалить"
-            >
-              −
-            </button>
-            <span className="border-x border-line px-2 py-1 text-[11px] text-ink-muted">масштаб</span>
-            <button
-              onClick={() => zoom(1.6)}
-              className="px-2.5 py-1 text-sm text-ink-muted hover:bg-canvas hover:text-ink"
-              title="Приблизить"
-            >
-              +
-            </button>
+
+          {/* Время: текущее — акцентно, общее — приглушённо */}
+          <div className="flex items-baseline gap-1 font-mono text-[13px] tabular">
+            <span className="text-ink">{fmtTime(now)}</span>
+            {dur != null && <span className="text-ink-muted/40">/</span>}
+            {dur != null && <span className="text-ink-muted">{fmtTime(dur)}</span>}
           </div>
+
+          {/* Зум волны: лупа + сегментный −/+ */}
+          <div className="inline-flex items-center gap-1.5 text-ink-muted">
+            <IconSearch size={15} />
+            <div className="inline-flex items-center overflow-hidden rounded-control border border-line bg-white">
+              <button
+                onClick={() => zoom(1 / 1.6)}
+                title="Отдалить"
+                className="grid h-8 w-8 place-items-center text-base leading-none text-ink-muted transition-colors hover:bg-canvas hover:text-ink"
+              >
+                −
+              </button>
+              <span className="h-5 w-px bg-line" />
+              <button
+                onClick={() => zoom(1.6)}
+                title="Приблизить"
+                className="grid h-8 w-8 place-items-center text-base leading-none text-ink-muted transition-colors hover:bg-canvas hover:text-ink"
+              >
+                +
+              </button>
+            </div>
+          </div>
+
           <div className="ml-auto">
             <Toggle
               checked={heatmap}
@@ -377,10 +446,9 @@ function Viewer({
         {writeMsg && <p className="text-xs text-emerald-600">{writeMsg}</p>}
       </div>
 
-      {/* Голоса — глобальное переименование по всей записи */}
+      {/* Спикеры — глобальное переименование по всей записи */}
       {originals.length > 0 && (
-        <Card className="flex flex-wrap items-center gap-x-4 gap-y-2 p-3">
-          <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-ink-muted">Голоса</span>
+        <Card className="flex flex-wrap items-center gap-x-3 gap-y-2 p-3">
           {originals.map((orig) => (
             <SpeakerEditor
               key={orig}
@@ -412,9 +480,13 @@ function Viewer({
           transform-классы нельзя мешать с animate-* (keyframes затирали translate,
           и кнопка падала под текст) — сдвиг задаём на обёртке без анимаций. */}
       {sel && !popup && (
+        // absolute + страничные координаты → кнопка едет вместе с текстом при
+        // прокрутке (не «прилипает» к экрану, как было с fixed). z-10 < z-20 шапки
+        // → уезжает ПОД липкий верх, когда текст уходит вверх. marginTop:0 гасит
+        // отступ от space-y родителя (иначе кнопку сносило на 1rem ниже).
         <div
-          className="fixed z-40 -translate-x-1/2 -translate-y-full"
-          style={{ left: sel.x, top: sel.y - 8 }}
+          className="absolute z-10 -translate-x-1/2 -translate-y-full"
+          style={{ left: sel.x, top: sel.y - 8, marginTop: 0 }}
         >
           <button
             onMouseDown={(e) => e.preventDefault()}
@@ -422,10 +494,12 @@ function Viewer({
               setPopup(sel.text);
               setSel(null);
             }}
-            className="flex items-center gap-1.5 whitespace-nowrap rounded-full bg-coral-500 px-3.5 py-1.5 text-xs font-medium text-white shadow-lift transition-transform duration-150 hover:scale-110 hover:bg-coral-600"
+            className="relative flex items-center gap-1.5 whitespace-nowrap rounded-full bg-coral-500 px-3.5 py-1.5 text-xs font-medium text-white shadow-lift transition-transform duration-150 hover:scale-105 hover:bg-coral-600"
           >
             <IconBook size={14} />
             Внести в словарь
+            {/* хвостик к выделению */}
+            <span className="absolute left-1/2 top-full h-0 w-0 -translate-x-1/2 border-x-[6px] border-t-[7px] border-x-transparent border-t-coral-500" />
           </button>
         </div>
       )}
@@ -461,7 +535,7 @@ function SpeakerEditor({
   }
   return (
     <span className="inline-flex items-center gap-1.5">
-      <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-white" style={{ background: color }} />
+      <IconUserSolid size={16} className="shrink-0" style={{ color }} />
       <input
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
@@ -469,10 +543,10 @@ function SpeakerEditor({
         onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
         title={failed ? "Не удалось сохранить имя — попробуйте ещё раз" : undefined}
         className={cn(
-          "h-7 w-36 rounded-chip border bg-transparent px-1.5 text-[13px] font-medium text-ink outline-none transition-colors focus:bg-white",
+          "h-8 w-40 rounded-control border bg-white px-2.5 text-[13px] font-medium text-ink outline-none transition-colors",
           failed
             ? "border-coral-500/70 focus:border-coral-500"
-            : "border-transparent hover:border-line focus:border-azure/60",
+            : "border-line hover:border-ink-muted/40 focus:border-azure/60",
         )}
       />
     </span>
@@ -556,22 +630,23 @@ function SegmentRow({
         >
           {fmtTime(seg.start)}
         </button>
-        <span className="inline-block h-2 w-2 shrink-0 rounded-full ring-2 ring-white" style={{ background: color }} />
+        <IconUserSolid size={14} className="shrink-0" style={{ color }} />
         <span className="text-[13px] font-medium text-ink">{seg.speaker || "без имени"}</span>
         <Badge tone={prov.tone}>{prov.label}</Badge>
         {seg.confidence != null && <Mono className="text-ink-muted/70">{seg.confidence.toFixed(2)}</Mono>}
         {seg.flags?.includes("hallucination_suspect") && <Badge tone="coral">галлюцинация?</Badge>}
         {seg.flags?.includes("loop_suspect") && <Badge tone="amber">повтор?</Badge>}
         {!editing && (
-          <button
+          <IconButton
+            label="Изменить"
             onClick={(e) => {
               e.stopPropagation();
               setEditing(true);
             }}
-            className="ml-auto text-xs text-ink-muted opacity-0 transition-opacity hover:text-coral-500 group-hover:opacity-100"
+            className="ml-auto h-7 w-7 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
           >
-            Изменить
-          </button>
+            <IconPen size={14} />
+          </IconButton>
         )}
       </div>
 
@@ -667,7 +742,7 @@ function GlossaryPopup({ text, onClose }: { text: string; onClose: () => void })
             </button>
           ))}
         </div>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3">
           <label className="block space-y-1">
             <span className="text-[11px] text-ink-muted">Как слышится</span>
             <textarea
