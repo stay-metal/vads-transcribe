@@ -17,7 +17,7 @@ class UnsupportedFormatError(TranscriberError):
     exceptions лёгкий, поэтому его можно тянуть из любого слоя.
     """
 
-    SUPPORTED_AUDIO = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".wma", ".opus"}
+    SUPPORTED_AUDIO = {".wav", ".mp3", ".flac", ".ogg", ".oga", ".m4a", ".aac", ".wma", ".opus"}
     SUPPORTED_VIDEO = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".wmv", ".flv", ".mpeg", ".mpg"}
 
     def __init__(self, file_format: str):
