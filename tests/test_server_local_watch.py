@@ -382,3 +382,70 @@ def test_scan_endpoint_skips_folder_still_being_written(tmp_path, monkeypatch):
     r = c.post("/api/ingest/local/scan")
     assert r.status_code == 200
     assert r.json()["started"] == []
+
+
+# --------------------------------------------------------------------------- #
+# Прескан: готовые транскрибации импортируются как done без транскрипции
+# --------------------------------------------------------------------------- #
+def _existing_result_json(folder: Path, duration: float = 42.5) -> Path:
+    out = folder / "transcripts" / "dialogscribe"
+    out.mkdir(parents=True)
+    payload = {
+        "full_text": "готовый транскрипт",
+        "metadata": {"duration": duration, "processing_time": 7.0, "route": "A"},
+        "segments": [{"start": 0.0, "end": 2.0, "text": "готовый транскрипт", "speaker": "Алиса"}],
+    }
+    p = out / "result.json"
+    p.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return p
+
+
+def test_scan_imports_existing_transcript_without_gpu(tmp_path, monkeypatch):
+    """Папка с уже готовым result.json (перенос архива/переустановка) заносится
+    в базу как done-джоба, транскрипция НЕ запускается."""
+    import gigaam_transcriber.server.local_watch as lw
+
+    c, settings, transcriber = _make(tmp_path)
+    monkeypatch.setattr(lw, "HTTP_SCAN_QUIESCENCE_SEC", 0.0)
+    watch = tmp_path / "zoom"
+    folder = make_zoom_folder(watch)
+    _existing_result_json(folder)
+    monkeypatch.setattr(
+        transcriber,
+        "transcribe_route_a",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("GPU не должен запускаться")),
+    )
+    _configure_local(c, watch, enabled=False)
+
+    r = c.post("/api/ingest/local/scan")
+    assert r.status_code == 200, r.text
+    started = r.json()["started"]
+    assert len(started) == 1 and started[0]["kind"] == "imported"
+
+    job = c.get(f"/api/jobs/{started[0]['job_id']}").json()
+    assert job["state"] == "done" and job["stage_pct"] == 100
+    assert job["duration_sec"] == 42.5
+    res = c.get(f"/api/jobs/{started[0]['job_id']}/result").json()
+    assert res["segments"][0]["text"] == "готовый транскрипт"  # кириллица verbatim (I1)
+    # Дедуп: повторный скан не создаёт вторую джобу.
+    r2 = c.post("/api/ingest/local/scan")
+    assert r2.json()["started"] == []
+
+
+def test_scan_with_broken_result_json_falls_back_to_transcription(tmp_path, monkeypatch):
+    """Битый result.json не импортируется — встреча честно уходит в транскрипцию."""
+    import gigaam_transcriber.server.local_watch as lw
+
+    c, settings, transcriber = _make(tmp_path)
+    monkeypatch.setattr(lw, "HTTP_SCAN_QUIESCENCE_SEC", 0.0)
+    watch = tmp_path / "zoom"
+    folder = make_zoom_folder(watch)
+    p = _existing_result_json(folder)
+    p.write_text("{битый json", encoding="utf-8")
+    _configure_local(c, watch, enabled=False)
+
+    r = c.post("/api/ingest/local/scan")
+    started = r.json()["started"]
+    assert len(started) == 1 and started[0]["kind"] != "imported"
+    job = c.get(f"/api/jobs/{started[0]['job_id']}").json()
+    assert job["state"] == "done"  # sync-enqueue: FakeTranscriber отработал

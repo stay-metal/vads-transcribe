@@ -1,11 +1,13 @@
 export type JobState =
   | "queued"
+  | "paused"
   | "preclean"
   | "vad"
   | "diarization"
   | "asr"
   | "quality"
   | "formatting"
+  | "canceling"
   | "done"
   | "error"
   | "canceled";

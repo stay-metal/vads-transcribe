@@ -20,6 +20,13 @@ logger = logging.getLogger(__name__)
 BATCH_SIZE = 16
 
 
+class DecodeCancelled(Exception):  # noqa: N818 — сигнал отмены, не ошибка
+    """Прерывание декода из progress_cb (кооперативная отмена вызывающим).
+
+    Fallback-цепочки декода обязаны пропускать это исключение наверх,
+    а не деградировать на plain-путь."""
+
+
 @dataclass
 class DecodeOptions:
     """Пер-джобовые опции декода.
@@ -35,18 +42,15 @@ class DecodeOptions:
     # split-device: Conformer в ORT-CPU, RNN-T голова в torch (confidence сохраняется).
     onnx_encoder: bool = False
     word_timestamps: bool = False
-    # Прогресс по VAD-сегментам (opt-in): cb(current, total). Только сайд-эффект —
-    # текст/argmax/декод не трогает (I1).
+    # Прогресс по VAD-сегментам (opt-in): cb(current, total). Текст/argmax/декод
+    # не трогает (I1). Контракт: исключение из колбэка ПРЕРЫВАЕТ декод — так
+    # сервер реализует кооперативную отмену джобы (JobCanceled между сегментами).
     progress_cb: Callable[[int, int], None] | None = None
 
 
 def _tick(cb: Callable[[int, int], None] | None, current: int, total: int) -> None:
-    if cb is None:
-        return
-    try:
+    if cb is not None:
         cb(current, total)
-    except Exception:
-        pass
 
 
 def decode_short(model, audio_path: Path, duration: float) -> list[TranscriptionSegment]:

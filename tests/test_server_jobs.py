@@ -496,3 +496,134 @@ def test_jobs_search_escapes_like_wildcards(tmp_path, monkeypatch):
     assert c.get("/api/jobs", params={"q": "_"}).json()["total"] == 0
     assert c.get("/api/jobs", params={"q": "%"}).json()["total"] == 0
     assert c.get("/api/jobs", params={"q": "Алиса"}).json()["total"] == 1
+
+
+# --------------------------------------------------------------------------- #
+# Пауза / кооперативная отмена / перетранскрибация
+# --------------------------------------------------------------------------- #
+def test_pause_resume_queued_job(tmp_path):
+    c = _make(tmp_path, sync=False)  # enqueue-заглушка: джоба остаётся queued
+    up = c.post("/api/uploads", files=[_file("mix.wav")]).json()
+    job_id = c.post(
+        "/api/jobs", json={"recording_id": up["recording_id"], "diarization": "none"}
+    ).json()["job_id"]
+
+    assert c.post(f"/api/jobs/{job_id}/pause").json()["state"] == "paused"
+    assert c.get(f"/api/jobs/{job_id}").json()["state"] == "paused"
+    # Повторная пауза — 409; resume возвращает в очередь (и заново ставит задачу).
+    assert c.post(f"/api/jobs/{job_id}/pause").status_code == 409
+    assert c.post(f"/api/jobs/{job_id}/resume").json()["state"] == "queued"
+    assert c.post(f"/api/jobs/{job_id}/resume").status_code == 409
+    # Пауза недоступна для идущей/терминальной — только queued.
+
+
+def test_pause_then_cancel(tmp_path):
+    c = _make(tmp_path, sync=False)
+    up = c.post("/api/uploads", files=[_file("mix.wav")]).json()
+    job_id = c.post(
+        "/api/jobs", json={"recording_id": up["recording_id"], "diarization": "none"}
+    ).json()["job_id"]
+    c.post(f"/api/jobs/{job_id}/pause")
+    assert c.post(f"/api/jobs/{job_id}/cancel").json()["state"] == "canceled"
+    assert c.get(f"/api/jobs/{job_id}").json()["state"] == "canceled"
+
+
+def test_paused_job_not_claimed_by_stale_huey_task(tmp_path):
+    """Уже поставленная huey-задача паузу уважает: claim_job берёт только queued."""
+    settings = _settings(tmp_path)
+    transcriber = FakeTranscriber()
+    pending = []
+    c = login_client(create_app(settings, enqueue=lambda jid: (pending.append(jid), "t")[1]))
+    up = c.post("/api/uploads", files=[_file("mix.wav")]).json()
+    job_id = c.post(
+        "/api/jobs", json={"recording_id": up["recording_id"], "diarization": "none"}
+    ).json()["job_id"]
+    c.post(f"/api/jobs/{job_id}/pause")
+    # «Отложенная» задача добегает до воркера уже после паузы.
+    process_job(settings, job_id, transcriber)
+    assert c.get(f"/api/jobs/{job_id}").json()["state"] == "paused"  # не тронута
+
+
+def test_cancel_running_job_cooperatively(tmp_path):
+    """Отмена ИДУЩЕЙ джобы: воркер замечает флаг на тике прогресса и завершает
+    её как canceled, результат не пишется."""
+    from gigaam_transcriber.server.db import get_conn
+    from gigaam_transcriber.server.repository import request_cancel_running
+
+    settings = _settings(tmp_path)
+
+    class CancelMidRun:
+        def transcribe_route_a(self, tracks, progress_callback=None, **kw):
+            # Пользователь жмёт «Отменить», пока идёт обработка.
+            with get_conn(settings.db_path) as conn:
+                row = conn.execute("SELECT id FROM jobs WHERE state='asr'").fetchone()
+            assert request_cancel_running(settings.db_path, row["id"])
+            progress_callback(1, 2, "дорожка")  # тик замечает флаг → JobCanceled
+            raise AssertionError("после отмены декод продолжаться не должен")
+
+    trans = CancelMidRun()
+    c = login_client(
+        create_app(settings, enqueue=lambda jid: (process_job(settings, jid, trans), "t")[1])
+    )
+    up = c.post("/api/uploads", files=[_file("Алиса.wav"), _file("Боб.wav")]).json()
+    job_id = c.post("/api/jobs", json={"recording_id": up["recording_id"]}).json()["job_id"]
+
+    job = c.get(f"/api/jobs/{job_id}").json()
+    assert job["state"] == "canceled"
+    assert c.get(f"/api/jobs/{job_id}/result").status_code == 409  # результата нет
+
+
+def test_cancel_endpoint_escalates_to_running(tmp_path):
+    """POST /cancel на идущей джобе → 'canceling' (не 409, как раньше)."""
+    from gigaam_transcriber.server.repository import claim_job
+
+    settings = _settings(tmp_path)
+    c = login_client(create_app(settings, enqueue=lambda jid: "t"))
+    up = c.post("/api/uploads", files=[_file("mix.wav")]).json()
+    job_id = c.post(
+        "/api/jobs", json={"recording_id": up["recording_id"], "diarization": "none"}
+    ).json()["job_id"]
+    claim_job(settings.db_path, job_id)  # эмуляция: воркер взял джобу (queued→asr)
+    r = c.post(f"/api/jobs/{job_id}/cancel")
+    assert r.status_code == 200 and r.json()["state"] == "canceling"
+    assert c.get(f"/api/jobs/{job_id}").json()["state"] == "canceling"
+
+
+def test_rerun_done_job(tmp_path):
+    """«Перетранскрибировать»: клон done-джобы уходит в очередь и завершается,
+    manifest удалён (иначе resume вернул бы кэш вместо новой транскрипции)."""
+    from pathlib import Path
+
+    from gigaam_transcriber.server.repository import get_job as repo_get_job
+
+    settings = _settings(tmp_path)
+    transcriber = FakeTranscriber()
+    c = login_client(
+        create_app(settings, enqueue=lambda jid: (process_job(settings, jid, transcriber), "t")[1])
+    )
+    up = c.post("/api/uploads", files=[_file("Алиса.wav"), _file("Боб.wav")]).json()
+    job_id = c.post("/api/jobs", json={"recording_id": up["recording_id"]}).json()["job_id"]
+    assert c.get(f"/api/jobs/{job_id}").json()["state"] == "done"
+
+    old = repo_get_job(settings.db_path, job_id)
+    Path(old["manifest_path"]).parent.mkdir(parents=True, exist_ok=True)
+    Path(old["manifest_path"]).write_text("{}", encoding="utf-8")  # «старый» manifest
+
+    r = c.post(f"/api/jobs/{job_id}/rerun")
+    assert r.status_code == 200, r.text
+    new_id = r.json()["job_id"]
+    assert new_id != job_id
+    assert not Path(old["manifest_path"]).exists()  # кэш сброшен
+    new = c.get(f"/api/jobs/{new_id}").json()
+    assert new["state"] == "done"  # sync-enqueue обработал клон
+    # Прежняя джоба осталась в списке.
+    assert c.get(f"/api/jobs/{job_id}").json()["state"] == "done"
+
+
+def test_rerun_requires_terminal_state(tmp_path):
+    c = _make(tmp_path, sync=False)
+    up = c.post("/api/uploads", files=[_file("mix.wav")]).json()
+    job_id = c.post(
+        "/api/jobs", json={"recording_id": up["recording_id"], "diarization": "none"}
+    ).json()["job_id"]
+    assert c.post(f"/api/jobs/{job_id}/rerun").status_code == 409  # ещё queued

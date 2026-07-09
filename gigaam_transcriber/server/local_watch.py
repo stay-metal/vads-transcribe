@@ -29,6 +29,7 @@ from .config import Settings
 from .ingest_common import STABILITY_THRESHOLD, register_job
 from .repository import (
     claim_ingest,
+    finish_job_ok,
     get_ingest_source,
     new_id,
     reclaim_ingest_if_job_failed,
@@ -251,6 +252,70 @@ def _create_job_for_unit(
     return job_id
 
 
+def _import_existing_transcript(
+    settings: Settings,
+    meeting: Meeting,
+    part: MeetingPart,
+    profile: ScanProfile,
+    default_params: dict,
+) -> str | None:
+    """Прескан: готовая транскрибация в папке вывода → регистрация как done-джоба.
+
+    Паттерн — result.json по раскладке профиля источника (_base_output_dir:
+    transcripts/dialogscribe[/Часть N] или fixed-папка). Найден и читается →
+    recording + job(state=done) без транскрипции (переустановка/перенос архива
+    не пережёвывает GPU уже сделанное). Битый/нечитаемый result.json → None
+    (честная транскрипция). Возвращает job_id или None."""
+    out_dir = _base_output_dir(meeting, part.index, profile)
+    result_json = out_dir / "result.json"
+    if not result_json.exists():
+        return None
+    try:
+        meta = (json.loads(result_json.read_text(encoding="utf-8")) or {}).get("metadata") or {}
+    except (OSError, ValueError):
+        logger.warning("прескан: битый result.json в %s — встреча уйдёт в транскрипцию", out_dir)
+        return None
+
+    title = _part_title(meeting, part.index)
+    if part.kind == "route_a" and part.tracks:
+        kind, tracks = "route_a", part.tracks
+    elif part.mix_path:
+        mix = Path(part.mix_path)
+        kind = "single"
+        tracks = [{"name": title, "path": str(mix), "size": mix.stat().st_size}]
+    else:
+        return None  # нет исходников — регистрировать нечего (job без дорожек бесполезна)
+
+    _rec_id, job_id = register_job(
+        settings,
+        origin="local",
+        kind=kind,
+        tracks=tracks,
+        title=title,
+        params={**default_params, "imported": True},
+        output_dir=out_dir,
+        work_dir=str(meeting.folder),
+        enqueue_gpu=None,  # без очереди: результат уже на диске
+    )
+    audio = out_dir / "audio.m4a"
+    finish_job_ok(
+        settings.db_path,
+        job_id,
+        result_json_path=str(result_json),
+        audio_path=str(audio) if audio.exists() else None,
+        duration_sec=float(meta.get("duration") or 0.0) or None,
+        processing_time_sec=float(meta.get("processing_time") or 0.0) or None,
+        device_fallback=False,
+    )
+    logger.info(
+        "прескан: часть %s встречи '%s' импортирована как done (job %s)",
+        part.index,
+        meeting.title,
+        job_id,
+    )
+    return job_id
+
+
 def ingest_meeting(
     settings: Settings,
     meeting: Meeting,
@@ -290,6 +355,20 @@ def ingest_meeting(
         return []
 
     out: list[dict] = []
+    # Прескан: части с уже готовым выводом импортируются как done (GPU не занимается);
+    # merge-решение принимается только по оставшимся «свежим» частям.
+    fresh: list[tuple[MeetingPart, str]] = []
+    for part, surrogate in claimed:
+        imported_job = _import_existing_transcript(settings, meeting, part, profile, default_params)
+        if imported_job is not None:
+            update_ingest(db, surrogate, status="downloaded", job_id=imported_job)
+            out.append({"job_id": imported_job, "kind": "imported", "part": part.index})
+        else:
+            fresh.append((part, surrogate))
+    claimed = fresh
+    if not claimed:
+        return out
+
     merge = profile.parts_mode == "merge" and len(claimed) > 1
     if merge and not media.ffmpeg_available():
         logger.warning("склейка частей недоступна без ffmpeg — части идут отдельно")

@@ -125,12 +125,14 @@ export function speakerColor(label?: string | null): string {
 
 export const ACTIVE_STATES: JobState[] = [
   "queued",
+  "paused",
   "preclean",
   "vad",
   "diarization",
   "asr",
   "quality",
   "formatting",
+  "canceling",
 ];
 
 type StatusTone = "wait" | "run" | "done" | "error";
@@ -141,6 +143,8 @@ type StatusTone = "wait" | "run" | "done" | "error";
  */
 export const STATUS_META: Record<JobState, { label: string; tone: StatusTone; hint: string }> = {
   queued: { label: "В очереди", tone: "wait", hint: "Ждёт свободный GPU-слот." },
+  paused: { label: "На паузе", tone: "wait", hint: "Снята с очереди — возобновите, когда нужно." },
+  canceling: { label: "Отменяется…", tone: "wait", hint: "Ждём безопасную точку остановки." },
   preclean: { label: "Чистим звук", tone: "run", hint: "Фильтруем шум перед распознаванием." },
   vad: { label: "Ищем речь", tone: "run", hint: "Находим участки с голосом." },
   diarization: { label: "Разделяем голоса", tone: "run", hint: "Определяем, кто когда говорит." },

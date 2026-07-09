@@ -24,6 +24,7 @@ from .data_models import (
     TranscriptionSegment,
 )
 from .decode import (
+    DecodeCancelled,
     DecodeOptions,
     decode_long_plain,
     decode_long_with_confidence,
@@ -902,12 +903,16 @@ class GigaAMTranscriber:
         onnx_enc = self._get_onnx_encoder() if opts.onnx_encoder else None
         try:
             return decode_long_with_confidence(self.model, audio_path, opts, onnx_enc)
+        except DecodeCancelled:
+            raise  # отмена — не повод для fallback на plain-путь
         except (RuntimeError, MemoryError) as e:
             # GPU OOM / сбой ядра на MPS/CUDA → перенести модель на CPU и повторить (#14).
             if self.device in ("mps", "cuda") and self._gpu_to_cpu_fallback(e):
                 logger.warning(f"GPU-сбой декода ({e!r}); повтор на CPU")
                 try:
                     return decode_long_with_confidence(self.model, audio_path, opts, onnx_enc)
+                except DecodeCancelled:
+                    raise
                 except Exception as e2:
                     # Вторая ошибка уже на CPU → деградируем на plain-путь, как и при
                     # ошибке без GPU-сбоя (лучше текст без confidence, чем упавшая джоба).

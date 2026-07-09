@@ -12,11 +12,11 @@ import { SOURCE_META, estimate, queueWait, fmtElapsed, fmtEta } from "./helpers"
 export function ActiveJobCard({ job, page, now }: { job: Job; page: JobsPage; now: number }) {
   const [open, setOpen] = React.useState(false);
   const qc = useQueryClient();
-  // Отмена: раньше ошибка глоталась — теперь показываем сбой и обновляем список.
-  const cancelMut = useMutation({
-    mutationFn: () => api.cancelJob(job.id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["jobs", "active"] }),
-  });
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["jobs", "active"] });
+  // Ошибки мутаций показываем (не глотаем) и обновляем список по успеху.
+  const cancelMut = useMutation({ mutationFn: () => api.cancelJob(job.id), onSuccess: invalidate });
+  const pauseMut = useMutation({ mutationFn: () => api.pauseJob(job.id), onSuccess: invalidate });
+  const resumeMut = useMutation({ mutationFn: () => api.resumeJob(job.id), onSuccess: invalidate });
   const meta = STATUS_META[job.state];
   const title = parseRecordingTitle(job.title).name || MODE_LABEL[job.mode] || job.mode;
   const est = estimate(job, page.avg_rtf, now);
@@ -88,19 +88,46 @@ export function ActiveJobCard({ job, page, now }: { job: Job; page: JobsPage; no
             <p className="text-xs text-ink-muted">
               Можно закрыть страницу — обработка продолжится на сервере.
             </p>
-            {job.state === "queued" && (
-              <div className="flex flex-col items-end gap-1">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => cancelMut.mutate()}
-                  disabled={cancelMut.isPending}
-                >
-                  {cancelMut.isPending ? "Отменяем…" : "Отменить"}
-                </Button>
-                {cancelMut.isError && <span className="text-xs text-coral-600">Не удалось отменить</span>}
+            <div className="flex flex-col items-end gap-1">
+              <div className="flex items-center gap-2">
+                {job.state === "queued" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => pauseMut.mutate()}
+                    disabled={pauseMut.isPending}
+                  >
+                    {pauseMut.isPending ? "Ставим…" : "Пауза"}
+                  </Button>
+                )}
+                {job.state === "paused" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => resumeMut.mutate()}
+                    disabled={resumeMut.isPending}
+                  >
+                    {resumeMut.isPending ? "Возобновляем…" : "Возобновить"}
+                  </Button>
+                )}
+                {job.state !== "canceling" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => cancelMut.mutate()}
+                    disabled={cancelMut.isPending}
+                  >
+                    {cancelMut.isPending ? "Отменяем…" : "Отменить"}
+                  </Button>
+                )}
               </div>
-            )}
+              {(cancelMut.isError || pauseMut.isError || resumeMut.isError) && (
+                <span className="text-xs text-coral-600">Не удалось выполнить действие</span>
+              )}
+              {job.state === "canceling" && (
+                <span className="text-xs text-ink-muted">Отменяется — ждём безопасную точку…</span>
+              )}
+            </div>
           </div>
         </div>
       )}

@@ -32,7 +32,10 @@ from .repository import (
     get_text_edits,
     jobs_state_counts,
     list_jobs_page,
+    pause_job_if_queued,
     queued_positions,
+    request_cancel_running,
+    resume_job_if_paused,
     set_job_dirs,
     set_job_duration,
     set_job_huey_task,
@@ -112,7 +115,19 @@ def _canon_date_bound(s: str) -> str:
 
 
 # Активные (нетерминальные) состояния — для scope-фильтра списка.
-_ACTIVE_STATES = ("queued", "preclean", "vad", "diarization", "asr", "quality", "formatting")
+# 'canceling' — идущая джоба с запрошенной отменой; 'paused' — снятая с очереди
+# (ждёт resume) — обе видны в «активной» секции UI.
+_ACTIVE_STATES = (
+    "queued",
+    "paused",
+    "preclean",
+    "vad",
+    "diarization",
+    "asr",
+    "quality",
+    "formatting",
+    "canceling",
+)
 _SCOPES: dict[str, tuple[str, ...]] = {
     "active": _ACTIVE_STATES,
     "done": ("done",),
@@ -293,15 +308,103 @@ async def job_events(job_id: str, request: Request, user: str = Depends(require_
 
 @router.post("/api/jobs/{job_id}/cancel")
 def cancel(job_id: str, request: Request, user: str = Depends(require_session)) -> dict:
+    """Отмена: queued → canceled сразу; идущая → 'canceling' (кооперативно).
+
+    Воркер замечает флаг на очередном тике прогресса (per-VAD-сегмент/дорожка)
+    и завершает джобу как canceled; во время диаризации тиков нет — отмена
+    применится с началом ASR. Если воркер успел доделать — done побеждает."""
     settings = request.app.state.settings
     job = get_job(settings.db_path, job_id)
     if job is None:
         raise HTTPException(404, "Джоба не найдена")
-    # Cancel честно только для queued (спека §7). CAS достаточно: running-джобу не
-    # трогаем — huey-задача доотработает и запишет результат (revoke не заведён).
-    if not cancel_job_if_queued(settings.db_path, job_id):
-        raise HTTPException(409, "Отмена возможна только для джобы в очереди")
-    return {"job_id": job_id, "state": "canceled"}
+    if cancel_job_if_queued(settings.db_path, job_id):
+        return {"job_id": job_id, "state": "canceled"}
+    if pause_job_if_queued(settings.db_path, job_id):  # маловероятная гонка queued→paused
+        cancel_job_if_queued(settings.db_path, job_id)
+    if request_cancel_running(settings.db_path, job_id):
+        return {"job_id": job_id, "state": "canceling"}
+    if job["state"] == "paused":
+        # Пауза = снята с очереди; отмена паузы — прямой перевод в canceled.
+        resume_job_if_paused(settings.db_path, job_id)
+        if cancel_job_if_queued(settings.db_path, job_id):
+            return {"job_id": job_id, "state": "canceled"}
+    raise HTTPException(409, "Отмена возможна только для очереди или идущей обработки")
+
+
+@router.post("/api/jobs/{job_id}/pause")
+def pause(job_id: str, request: Request, user: str = Depends(require_session)) -> dict:
+    """Пауза ТОЛЬКО для очереди (идущий GPU-декод не замораживается — для него cancel)."""
+    settings = request.app.state.settings
+    if get_job(settings.db_path, job_id) is None:
+        raise HTTPException(404, "Джоба не найдена")
+    if not pause_job_if_queued(settings.db_path, job_id):
+        raise HTTPException(409, "Пауза возможна только для джобы в очереди")
+    return {"job_id": job_id, "state": "paused"}
+
+
+@router.post("/api/jobs/{job_id}/resume")
+def resume(job_id: str, request: Request, user: str = Depends(require_session)) -> dict:
+    """Снять с паузы: paused → queued + постановка задачи в gpu-очередь заново."""
+    settings = request.app.state.settings
+    if get_job(settings.db_path, job_id) is None:
+        raise HTTPException(404, "Джоба не найдена")
+    if not resume_job_if_paused(settings.db_path, job_id):
+        raise HTTPException(409, "Возобновление возможно только для джобы на паузе")
+    enqueue = getattr(request.app.state, "enqueue", None)
+    if enqueue is not None:
+        task_id = enqueue(job_id)
+        if task_id:
+            set_job_huey_task(settings.db_path, job_id, str(task_id))
+    return {"job_id": job_id, "state": "queued"}
+
+
+@router.post("/api/jobs/{job_id}/rerun")
+def rerun(job_id: str, request: Request, user: str = Depends(require_session)) -> dict:
+    """Перетранскрибировать: клон завершённой джобы (те же параметры/вывод) в очередь.
+
+    manifest удаляется — иначе resume мгновенно вернул бы кэш вместо новой
+    транскрипции. Вывод пишется в тот же output_dir (для local — в папку встречи):
+    свежий результат перезаписывает старый; прежняя джоба остаётся в списке."""
+    settings = request.app.state.settings
+    db = settings.db_path
+    job = get_job(db, job_id)
+    if job is None:
+        raise HTTPException(404, "Джоба не найдена")
+    if job["state"] not in ("done", "error", "canceled"):
+        raise HTTPException(409, "Перетранскрибация доступна только для завершённой джобы")
+    rec = get_recording(db, job["recording_id"]) if job["recording_id"] else None
+    if rec is None or not rec["tracks"]:
+        raise HTTPException(409, "У записи нет дорожек")
+    missing = [t["name"] for t in rec["tracks"] if not Path(t["path"]).exists()]
+    if missing:
+        raise HTTPException(409, f"Исходные файлы недоступны: {', '.join(missing)}")
+    if not media.ffmpeg_available():
+        raise HTTPException(503, "ffmpeg недоступен на сервере")
+
+    # Импортированной джобе (прескан) params ставил сканер — «пере» здесь честная
+    # первая транскрипция с дефолтами источника; флаг imported новой джобе не нужен.
+    params = {k: v for k, v in (job["params"] or {}).items() if k != "imported"}
+    new_id_ = create_job(
+        db, mode=job["mode"], source=job["source"], recording_id=job["recording_id"], params=params
+    )
+    if job.get("duration_sec"):
+        set_job_duration(db, new_id_, float(job["duration_sec"]))
+    set_job_dirs(
+        db,
+        new_id_,
+        work_dir=job.get("work_dir") or job["output_dir"],
+        output_dir=job["output_dir"],
+        manifest_path=job.get("manifest_path") or str(Path(job["output_dir"]) / "manifest.json"),
+    )
+    if job.get("manifest_path"):
+        Path(job["manifest_path"]).unlink(missing_ok=True)
+    set_recording_latest_job(db, job["recording_id"], new_id_)
+    enqueue = getattr(request.app.state, "enqueue", None)
+    if enqueue is not None:
+        task_id = enqueue(new_id_)
+        if task_id:
+            set_job_huey_task(db, new_id_, str(task_id))
+    return {"job_id": new_id_, "state": "queued", "mode": job["mode"]}
 
 
 # --------------------------------------------------------------------------- #

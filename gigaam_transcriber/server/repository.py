@@ -264,7 +264,10 @@ def claim_job(db_path: Path, job_id: str) -> bool:
 
 
 def update_job_progress(db_path: Path, job_id: str, state: str, stage_pct: int) -> None:
-    """Обновить стадию/процент; терминальные состояния не перезаписываются."""
+    """Обновить стадию/процент; терминальные состояния и запрос отмены не перезаписываются.
+
+    'canceling' в guard'е: иначе очередной тик прогресса воркера затирал бы
+    запрошенную пользователем отмену обратно в 'asr'."""
     with get_conn(db_path) as conn:
         if state != "queued":
             conn.execute(
@@ -272,7 +275,8 @@ def update_job_progress(db_path: Path, job_id: str, state: str, stage_pct: int) 
                 (_now(), job_id),
             )
         conn.execute(
-            "UPDATE jobs SET state=?, stage_pct=? WHERE id=? AND state NOT IN ('done','error','canceled')",
+            "UPDATE jobs SET state=?, stage_pct=? WHERE id=? "
+            "AND state NOT IN ('done','error','canceled','canceling')",
             (state, stage_pct, job_id),
         )
 
@@ -288,7 +292,7 @@ def reconcile_orphaned_jobs(db_path: Path) -> int:
         cur = conn.execute(
             "UPDATE jobs SET state='error', error_code='worker_restart', "
             "error_message='Обработка прервана перезапуском', finished_at=? "
-            "WHERE state IN ('preclean','vad','diarization','asr','quality','formatting')",
+            "WHERE state IN ('preclean','vad','diarization','asr','quality','formatting','canceling')",
             (_now(),),
         )
         return cur.rowcount
@@ -336,6 +340,65 @@ def cancel_job_if_queued(db_path: Path, job_id: str) -> bool:
         cur = conn.execute(
             "UPDATE jobs SET state='canceled', finished_at=? WHERE id=? AND state='queued'",
             (_now(), job_id),
+        )
+        return cur.rowcount > 0
+
+
+# In-flight стадии воркера (запрос кооперативной отмены применим только к ним).
+_RUNNING_STATES = ("preclean", "vad", "diarization", "asr", "quality", "formatting")
+
+
+def request_cancel_running(db_path: Path, job_id: str) -> bool:
+    """Запросить отмену ИДУЩЕЙ джобы: in-flight стадия → 'canceling' (CAS).
+
+    Отмена кооперативная: воркер замечает флаг на очередном тике прогресса
+    (per-VAD-сегмент / per-track) и завершает джобу как canceled. Если воркер
+    успел доделать работу до тика — done побеждает (результат уже есть)."""
+    with get_conn(db_path) as conn:
+        cur = conn.execute(
+            f"UPDATE jobs SET state='canceling' WHERE id=? "
+            f"AND state IN ({','.join('?' * len(_RUNNING_STATES))})",
+            (job_id, *_RUNNING_STATES),
+        )
+        return cur.rowcount > 0
+
+
+def job_cancel_requested(db_path: Path, job_id: str) -> bool:
+    """Проверка флага отмены (зовётся воркером на тиках прогресса)."""
+    with get_conn(db_path) as conn:
+        row = conn.execute("SELECT state FROM jobs WHERE id=?", (job_id,)).fetchone()
+    return row is not None and row["state"] == "canceling"
+
+
+def mark_job_canceled(db_path: Path, job_id: str) -> None:
+    """Финализировать кооперативную отмену: canceling → canceled."""
+    with get_conn(db_path) as conn:
+        conn.execute(
+            "UPDATE jobs SET state='canceled', finished_at=? WHERE id=? AND state='canceling'",
+            (_now(), job_id),
+        )
+
+
+def pause_job_if_queued(db_path: Path, job_id: str) -> bool:
+    """Пауза ТОЛЬКО для очереди: queued → paused (CAS).
+
+    Идущую джобу поставить на паузу нельзя (GPU-декод не замораживается) — для
+    неё есть отмена. Уже поставленная huey-задача при claim_job увидит не-queued
+    состояние и молча выйдет; resume ставит задачу заново."""
+    with get_conn(db_path) as conn:
+        cur = conn.execute(
+            "UPDATE jobs SET state='paused' WHERE id=? AND state='queued'",
+            (job_id,),
+        )
+        return cur.rowcount > 0
+
+
+def resume_job_if_paused(db_path: Path, job_id: str) -> bool:
+    """Снять с паузы: paused → queued (CAS). Enqueue делает вызывающий (HTTP-слой)."""
+    with get_conn(db_path) as conn:
+        cur = conn.execute(
+            "UPDATE jobs SET state='queued' WHERE id=? AND state='paused'",
+            (job_id,),
         )
         return cur.rowcount > 0
 

@@ -128,6 +128,9 @@ export const api = {
   },
   getJob: (id: string) => req<Job>(`/api/jobs/${id}`),
   cancelJob: (id: string) => req<unknown>(`/api/jobs/${id}/cancel`, { method: "POST" }),
+  pauseJob: (id: string) => req<unknown>(`/api/jobs/${id}/pause`, { method: "POST" }),
+  resumeJob: (id: string) => req<unknown>(`/api/jobs/${id}/resume`, { method: "POST" }),
+  rerunJob: (id: string) => req<{ job_id: string }>(`/api/jobs/${id}/rerun`, { method: "POST" }),
   result: (id: string) => req<TranscriptResult>(`/api/jobs/${id}/result`),
   putSpeakers: (id: string, edits: Record<string, string>) =>
     req<unknown>(`/api/jobs/${id}/speakers`, {

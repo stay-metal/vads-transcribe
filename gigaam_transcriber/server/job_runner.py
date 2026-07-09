@@ -12,6 +12,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from gigaam_transcriber.decode import DecodeCancelled
+
 from . import media
 from .config import Settings
 from .repository import (
@@ -20,10 +22,20 @@ from .repository import (
     finish_job_ok,
     get_job,
     get_recording,
+    job_cancel_requested,
+    mark_job_canceled,
     update_job_progress,
 )
 
 logger = logging.getLogger("dialogscribe.jobs")
+
+
+class JobCanceled(DecodeCancelled):  # noqa: N818 — сигнал отмены, не ошибка
+    """Кооперативная отмена: пользователь запросил cancel идущей джобы.
+
+    Наследует библиотечный DecodeCancelled — fallback-цепочки декода пропускают
+    его наверх, не деградируя на plain-путь."""
+
 
 # Карта классов исключений библиотеки → (error_code, безопасное сообщение).
 _ERROR_MAP = {
@@ -43,12 +55,16 @@ def classify_error(exc: Exception) -> tuple[str, str]:
 
 
 def _stage_callback(settings: Settings, job_id: str):
-    """progress_callback → stage_pct в диапазоне ASR 45..85.
+    """progress_callback → stage_pct в диапазоне ASR 45..85 + точка кооперативной отмены.
 
     Один колбэк на оба пути: route_a зовёт (current, total, name),
-    single — (current, total) per-VAD-сегмент; имя не используется."""
+    single — (current, total) per-VAD-сегмент; имя не используется.
+    На каждом тике проверяется флаг 'canceling' — единственное место, где воркер
+    может безопасно прервать декод (между VAD-сегментами/дорожками)."""
 
     def cb(current: int, total: int, *_name: str) -> None:
+        if job_cancel_requested(settings.db_path, job_id):
+            raise JobCanceled(job_id)
         frac = (current / total) if total else 0.0
         update_job_progress(settings.db_path, job_id, "asr", min(45 + int(frac * 40), 85))
 
@@ -180,6 +196,9 @@ def process_job(settings: Settings, job_id: str, transcriber) -> None:
             processing_time_sec=getattr(result, "processing_time", None),
             device_fallback=bool(result.metadata.get("device_fallback")),
         )
+    except JobCanceled:
+        mark_job_canceled(db, job_id)
+        logger.info("джоба %s отменена пользователем во время обработки", job_id)
     except Exception as exc:  # noqa: BLE001 — любая ошибка исполнения → state=error
         code, message = classify_error(exc)
         fail_job(db, job_id, code, message)

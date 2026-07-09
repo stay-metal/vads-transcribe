@@ -1,6 +1,12 @@
 import * as React from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { keepPreviousData, useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import {
   createColumnHelper,
   flexRender,
@@ -140,6 +146,11 @@ const RECORD_COLUMNS = [
     cell: ({ row }) => <SourceBadge source={row.original.source} />,
   }),
   columnHelper.display({
+    id: "actions",
+    header: () => null,
+    cell: ({ row }) => <RerunCell job={row.original} />,
+  }),
+  columnHelper.display({
     id: "chevron",
     header: () => null,
     cell: ({ row }) =>
@@ -153,7 +164,36 @@ const RECORD_COLUMNS = [
 ];
 
 const RIGHT_COLS = new Set(["duration_sec", "processing"]);
-const META_COLS = new Set(["glyph", "chevron"]);
+const META_COLS = new Set(["glyph", "actions", "chevron"]);
+
+/** «Перетранскрибировать» для завершённой джобы: клон в очередь (без resume-кэша). */
+function RerunCell({ job }: { job: Job }) {
+  const qc = useQueryClient();
+  const mut = useMutation({
+    mutationFn: () => api.rerunJob(job.id),
+    // Новая джоба появляется в активной секции; архив обновится по завершении.
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["jobs"] }),
+  });
+  if (!["done", "error", "canceled"].includes(job.state)) return null;
+  return (
+    <span className="flex flex-col items-end gap-0.5">
+      <Button
+        variant="ghost"
+        size="sm"
+        className="whitespace-nowrap"
+        title="Перетранскрибировать заново (свежий результат перезапишет текущий)"
+        onClick={(e) => {
+          e.stopPropagation();
+          mut.mutate();
+        }}
+        disabled={mut.isPending}
+      >
+        {mut.isPending ? "Ставим…" : "Заново"}
+      </Button>
+      {mut.isError && <span className="text-xs text-coral-600">не удалось</span>}
+    </span>
+  );
+}
 
 function RecordsTable({ data }: { data: Job[] }) {
   const navigate = useNavigate();
