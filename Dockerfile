@@ -1,8 +1,10 @@
-# DialogScribe — образ api / io-worker (CPU-база).
-# gpu-worker'у нужна CUDA-база (torch+cuda, GigaAM на GPU) — отдельный Dockerfile.gpu
-# в деплое; здесь общий образ для api и io-worker (модель не держат).
+# DialogScribe — общий образ api / io-worker / gpu-worker.
+# База CPU-friendly (python-slim); на linux/amd64 pip-колёса torch включают CUDA,
+# поэтому gpu-worker работает из этого же образа при наличии NVIDIA Container Toolkit.
+# После запуска проверьте metadata.device джобы: device_fallback='cpu' у всех джоб
+# означает, что GPU в контейнер не пробросился.
 
-# --- этап 1: сборка SPA (M4) ---
+# --- этап 1: сборка SPA ---
 FROM node:22-slim AS frontend
 WORKDIR /fe
 COPY frontend/package.json frontend/package-lock.json* ./
@@ -24,8 +26,10 @@ COPY . /app
 # Собранная SPA → раздаётся FastAPI (catch-all после /api).
 COPY --from=frontend /fe/dist /app/gigaam_transcriber/server/static
 
-# Пакет + серверный экстра + диаризация. GigaAM (vendored submodule) — editable.
-RUN pip install --no-cache-dir -e ".[server,diarization]" \
+# Пакет + все рантайм-экстры: без second-opinion/onnx фичи, видимые в UI
+# (L2 «второе мнение», backend=onnx), падали бы в контейнере на ImportError.
+# GigaAM (vendored clone) — editable.
+RUN pip install --no-cache-dir -e ".[server,diarization,second-opinion,onnx]" \
     && if [ -d GigaAM ]; then pip install --no-cache-dir -e ./GigaAM; fi
 
 ENV DIALOGSCRIBE_DATA_DIR=/data

@@ -7,26 +7,13 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from .db import get_conn
-
-# Состояния джобы (спека §7).
-JOB_STATES = (
-    "queued",
-    "preclean",
-    "vad",
-    "diarization",
-    "asr",
-    "quality",
-    "formatting",
-    "done",
-    "error",
-    "canceled",
-)
 
 
 def _now() -> str:
@@ -39,6 +26,14 @@ def new_id() -> str:
 
 def _row_to_dict(row) -> dict | None:
     return dict(row) if row is not None else None
+
+
+def _job_from_row(row: sqlite3.Row) -> dict:
+    """Строка jobs → dict с распакованным params_json и bool device_fallback."""
+    job = dict(row)
+    job["params"] = json.loads(job.pop("params_json") or "{}")
+    job["device_fallback"] = bool(job["device_fallback"])
+    return job
 
 
 # --------------------------------------------------------------------------- #
@@ -135,25 +130,101 @@ def create_job(
 def get_job(db_path: Path, job_id: str) -> dict | None:
     with get_conn(db_path) as conn:
         row = conn.execute("SELECT * FROM jobs WHERE id=?", (job_id,)).fetchone()
-    job = _row_to_dict(row)
-    if job is not None:
-        job["params"] = json.loads(job.pop("params_json") or "{}")
-        job["device_fallback"] = bool(job["device_fallback"])
-    return job
+    return _job_from_row(row) if row is not None else None
 
 
-def list_jobs(db_path: Path, limit: int = 100) -> list[dict]:
+def list_jobs_page(
+    db_path: Path,
+    *,
+    q: str | None = None,
+    states: tuple[str, ...] | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[dict], int]:
+    """Страница джоб с названием записи (архив/фильтры UI). → (jobs, total).
+
+    Поиск — подстрока в названии записи или id джобы (LIKE; для кириллицы
+    регистрозависимо — ограничение sqlite LIKE). Диапазон дат — по `created_at`
+    (ISO-8601 UTC, лексикографическое сравнение): `date_from` включительно,
+    `date_to` исключительно (полуинтервал; каноничные границы готовит роут)."""
+    where, params = [], []
+    if states:
+        where.append(f"j.state IN ({','.join('?' * len(states))})")
+        params += list(states)
+    if q and q.strip():
+        # Метасимволы LIKE в пользовательской строке — литералы («Часть_1»
+        # не должна матчить «Часть21», «50%» — «50 минут»).
+        safe = q.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        where.append("(r.title LIKE ? ESCAPE '\\' OR j.id LIKE ? ESCAPE '\\')")
+        like = f"%{safe}%"
+        params += [like, like]
+    if date_from:
+        where.append("j.created_at >= ?")
+        params.append(date_from)
+    if date_to:
+        where.append("j.created_at < ?")
+        params.append(date_to)
+    cond = (" WHERE " + " AND ".join(where)) if where else ""
+    base = f"FROM jobs j LEFT JOIN recordings r ON r.id = j.recording_id{cond}"
+    with get_conn(db_path) as conn:
+        total = conn.execute(f"SELECT COUNT(*) {base}", params).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT j.*, r.title AS title, r.track_count AS track_count {base} "
+            "ORDER BY j.created_at DESC LIMIT ? OFFSET ?",
+            [*params, limit, offset],
+        ).fetchall()
+    return [_job_from_row(row) for row in rows], int(total)
+
+
+def jobs_state_counts(db_path: Path) -> dict[str, int]:
+    with get_conn(db_path) as conn:
+        rows = conn.execute("SELECT state, COUNT(*) AS n FROM jobs GROUP BY state").fetchall()
+    return {r["state"]: int(r["n"]) for r in rows}
+
+
+def done_duration_total(db_path: Path) -> float:
+    """Суммарная длительность расшифрованного аудио (сводка «часов расшифровано»)."""
+    with get_conn(db_path) as conn:
+        row = conn.execute(
+            "SELECT COALESCE(SUM(duration_sec), 0) FROM jobs WHERE state='done'"
+        ).fetchone()
+    return float(row[0])  # COALESCE гарантирует не-NULL
+
+
+def avg_recent_rtf(db_path: Path, n: int = 10) -> float | None:
+    """Средний real-time factor последних успешных джоб (для оценки ETA).
+
+    Короткие файлы шумят (прогрев/оверхед) — берём только записи от минуты."""
     with get_conn(db_path) as conn:
         rows = conn.execute(
-            "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
+            "SELECT processing_time_sec / duration_sec AS rtf FROM jobs "
+            "WHERE state='done' AND duration_sec >= 60 AND processing_time_sec > 0 "
+            "ORDER BY finished_at DESC LIMIT ?",
+            (n,),
         ).fetchall()
-    out = []
-    for row in rows:
-        job = dict(row)
-        job["params"] = json.loads(job.pop("params_json") or "{}")
-        job["device_fallback"] = bool(job["device_fallback"])
-        out.append(job)
-    return out
+    vals = [float(r["rtf"]) for r in rows if r["rtf"] is not None]
+    return (sum(vals) / len(vals)) if vals else None
+
+
+def queued_positions(db_path: Path) -> dict[str, int]:
+    """id → позиция в очереди (1-based) для queued-джоб (FIFO по created_at)."""
+    with get_conn(db_path) as conn:
+        rows = conn.execute(
+            "SELECT id FROM jobs WHERE state='queued' ORDER BY created_at"
+        ).fetchall()
+    return {r["id"]: i + 1 for i, r in enumerate(rows)}
+
+
+def set_job_duration(db_path: Path, job_id: str, duration_sec: float) -> None:
+    """Проставить длительность аудио ДО обработки (ETA в UI); финиш перезапишет
+    фактической. Только если ещё не известна."""
+    with get_conn(db_path) as conn:
+        conn.execute(
+            "UPDATE jobs SET duration_sec=? WHERE id=? AND duration_sec IS NULL",
+            (float(duration_sec), job_id),
+        )
 
 
 def set_job_huey_task(db_path: Path, job_id: str, huey_task_id: str) -> None:
@@ -176,9 +247,6 @@ def set_job_dirs(
         )
 
 
-_TERMINAL = ("done", "error", "canceled")
-
-
 def claim_job(db_path: Path, job_id: str) -> bool:
     """Атомарно захватить queued-джобу (queued→asr). Возвращает True победителю.
 
@@ -188,7 +256,7 @@ def claim_job(db_path: Path, job_id: str) -> bool:
     """
     with get_conn(db_path) as conn:
         cur = conn.execute(
-            "UPDATE jobs SET state='asr', stage_pct=45, started_at=COALESCE(started_at, ?) "
+            "UPDATE jobs SET state='asr', stage_pct=30, started_at=COALESCE(started_at, ?) "
             "WHERE id=? AND state='queued'",
             (_now(), job_id),
         )
@@ -293,6 +361,40 @@ def set_speaker_edit(db_path: Path, job_id: str, original_label: str, new_label:
         )
 
 
+# text_edits (overlay правок текста реплики по индексу; result.json не мутируется)
+def get_text_edits(db_path: Path, job_id: str) -> dict[int, str]:
+    with get_conn(db_path) as conn:
+        rows = conn.execute(
+            "SELECT seg_index, new_text FROM text_edits WHERE job_id=?", (job_id,)
+        ).fetchall()
+    return {int(r["seg_index"]): r["new_text"] for r in rows}
+
+
+def set_text_edit(db_path: Path, job_id: str, seg_index: int, new_text: str) -> None:
+    with get_conn(db_path) as conn:
+        conn.execute(
+            "INSERT INTO text_edits(job_id, seg_index, new_text) VALUES(?,?,?) "
+            "ON CONFLICT(job_id, seg_index) DO UPDATE SET new_text=excluded.new_text",
+            (job_id, int(seg_index), new_text),
+        )
+
+
+# meta (key/value): пользовательские настройки уровня приложения
+def get_meta(db_path: Path, key: str, default: str | None = None) -> str | None:
+    with get_conn(db_path) as conn:
+        row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_meta(db_path: Path, key: str, value: str) -> None:
+    with get_conn(db_path) as conn:
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES(?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+
+
 # --------------------------------------------------------------------------- #
 # Яндекс.Диск (M5): токен + claim-граница ingest
 # --------------------------------------------------------------------------- #
@@ -318,21 +420,15 @@ def set_yandex_token(
 def update_yandex_access(
     db_path: Path, token_enc: str, expires_at: str, refresh_token_enc: str | None = None
 ) -> None:
-    """Обновить access-токен (и опц. refresh) после refresh_token-обмена — не трогая
-    прочие поля, если refresh не менялся."""
+    """Обновить access-токен (и опц. refresh) после refresh_token-обмена. `None`
+    для refresh → COALESCE сохраняет прежний (refresh не менялся)."""
     with get_conn(db_path) as conn:
-        if refresh_token_enc is not None:
-            conn.execute(
-                "UPDATE yandex_auth SET token_enc=?, refresh_token_enc=?, expires_at=?, "
-                "check_ok=1, updated_at=? WHERE id=1",
-                (token_enc, refresh_token_enc, expires_at, _now()),
-            )
-        else:
-            conn.execute(
-                "UPDATE yandex_auth SET token_enc=?, expires_at=?, check_ok=1, updated_at=? "
-                "WHERE id=1",
-                (token_enc, expires_at, _now()),
-            )
+        conn.execute(
+            "UPDATE yandex_auth SET token_enc=?, "
+            "refresh_token_enc=COALESCE(?, refresh_token_enc), expires_at=?, check_ok=1, "
+            "updated_at=? WHERE id=1",
+            (token_enc, refresh_token_enc, expires_at, _now()),
+        )
 
 
 def get_yandex_auth(db_path: Path) -> dict | None:
@@ -344,12 +440,26 @@ def get_yandex_auth(db_path: Path) -> dict | None:
     return auth
 
 
-def claim_ingest(db_path: Path, key: str, resource_id: str | None) -> str | None:
+# Активный claim старше этого возраста считаем зависшим (жёсткая смерть io-воркера
+# по SIGKILL не переводит статус в error) — ручной pull/скан может его переклеймить.
+STALE_CLAIM_SECONDS = 3600
+
+
+def claim_ingest(
+    db_path: Path, key: str, resource_id: str | None, *, allow_reclaim: bool = False
+) -> str | None:
     """Claim по `path:revision`. Возвращает surrogate_id для обработки, иначе None.
 
-    Первый раз → новый surrogate. Если строка уже есть: терминальную
-    (downloaded/done) НЕ переклеймиваем (дедуп — без второй джобы), а застрявшую
-    (claimed/downloading/error после сбоя/краха) ПЕРЕклеймиваем → re-pull восстановим.
+    Первый раз → новый surrogate. Если строка уже есть:
+    - терминальную (`downloaded`/`done`) НЕ переклеймиваем (дедуп — без второй джобы);
+    - активную (`claimed`/`downloading`) НЕ переклеймиваем: загрузка идёт прямо
+      сейчас — повторный клейм породил бы второе скачивание и дубль-джобу.
+      Исключение — `allow_reclaim` И claim старше STALE_CLAIM_SECONDS: SIGKILL
+      io-воркера не оставляет except-ветке шанса поставить `error`, и без
+      возрастного переклейма ключ застревал бы навсегда;
+    - `error` (упавшая загрузка/склейка) переклеймиваем ТОЛЬКО при `allow_reclaim`
+      (ручной pull/скан): авто-поллер иначе пережёвывал бы битый файл каждый тик.
+    Переклеймы — CAS по статусу (гонка ручного с кроном → переклеймит ровно один).
     """
     surrogate = new_id()
     with get_conn(db_path) as conn:
@@ -361,23 +471,48 @@ def claim_ingest(db_path: Path, key: str, resource_id: str | None) -> str | None
         if cur.rowcount > 0:
             return surrogate
         row = conn.execute(
-            "SELECT surrogate_id, status FROM ingest_seen WHERE key=?", (key,)
+            "SELECT surrogate_id, status, created_at FROM ingest_seen WHERE key=?", (key,)
         ).fetchone()
         if row is None:  # маловероятная гонка
             return None
-        if row["status"] in ("downloaded", "done"):
-            return None  # действительно уже обработано
-        # не-терминальная (сбой/краш) → переклеймить тем же surrogate
-        conn.execute("UPDATE ingest_seen SET status='claimed' WHERE key=?", (key,))
-        return row["surrogate_id"]
+        if allow_reclaim and row["status"] == "error":
+            reclaimed = conn.execute(
+                "UPDATE ingest_seen SET status='claimed', created_at=? "
+                "WHERE key=? AND status='error'",
+                (_now(), key),
+            )
+            return row["surrogate_id"] if reclaimed.rowcount > 0 else None
+        if allow_reclaim and row["status"] in ("claimed", "downloading"):
+            cutoff = (
+                datetime.now(timezone.utc) - timedelta(seconds=STALE_CLAIM_SECONDS)
+            ).isoformat()
+            reclaimed = conn.execute(
+                "UPDATE ingest_seen SET status='claimed', created_at=? "
+                "WHERE key=? AND status=? AND created_at < ?",
+                (_now(), key, row["status"], cutoff),
+            )
+            return row["surrogate_id"] if reclaimed.rowcount > 0 else None
+        return None  # терминальная/активная/error-без-разрешения — без второй задачи
 
 
-def get_ingest(db_path: Path, surrogate_id: str) -> dict | None:
+def reclaim_ingest_if_job_failed(db_path: Path, key: str) -> str | None:
+    """Переклеймить ТЕРМИНАЛЬНЫЙ ingest, чья джоба упала (error) или отменена.
+
+    Локальный watch: `downloaded` ставится при регистрации (download нет), и без
+    этого пути встреча с упавшей транскрипцией навсегда лишалась повтора —
+    пользователь чинит файл, жмёт «Сканировать», а дедуп молчит. CAS по статусу
+    (гонка ручного скана с кроном → переклеймит ровно один). Возвращает
+    surrogate_id для повторной обработки или None."""
     with get_conn(db_path) as conn:
-        row = conn.execute(
-            "SELECT * FROM ingest_seen WHERE surrogate_id=?", (surrogate_id,)
-        ).fetchone()
-    return _row_to_dict(row)
+        cur = conn.execute(
+            "UPDATE ingest_seen SET status='claimed' WHERE key=? AND status='downloaded' "
+            "AND job_id IN (SELECT id FROM jobs WHERE state IN ('error','canceled'))",
+            (key,),
+        )
+        if cur.rowcount == 0:
+            return None
+        row = conn.execute("SELECT surrogate_id FROM ingest_seen WHERE key=?", (key,)).fetchone()
+        return row["surrogate_id"] if row else None
 
 
 def update_ingest(
@@ -405,10 +540,12 @@ def update_ingest(
         conn.execute(f"UPDATE ingest_seen SET {', '.join(sets)} WHERE surrogate_id=?", vals)
 
 
-# --- Авто-watch: singleton-конфиг источника + окно стабильности ---
-def get_ingest_source(db_path: Path) -> dict | None:
+# --- Авто-watch: конфиг источников (yandex/local) + окно стабильности ---
+def get_ingest_source(db_path: Path, source_type: str = "yandex") -> dict | None:
     with get_conn(db_path) as conn:
-        row = conn.execute("SELECT * FROM ingest_sources WHERE id=1").fetchone()
+        row = conn.execute(
+            "SELECT * FROM ingest_sources WHERE source_type=?", (source_type,)
+        ).fetchone()
     src = _row_to_dict(row)
     if src is not None:
         src["enabled"] = bool(src["enabled"])
@@ -416,16 +553,83 @@ def get_ingest_source(db_path: Path) -> dict | None:
 
 
 def upsert_ingest_source(
-    db_path: Path, watch_dir: str, enabled: bool, poll_interval: int, default_params_json: str
+    db_path: Path,
+    watch_dir: str,
+    enabled: bool,
+    poll_interval: int,
+    default_params_json: str | None = None,
+    source_type: str = "yandex",
+    scan_profile_json: str | None = None,
 ) -> None:
+    """Сохранить конфиг источника. `None` для JSON-полей = «не менять
+    сохранённое» (иначе каждый PUT из UI, не знающий про поле, затирал бы его)."""
+    with get_conn(db_path) as conn:
+        row = conn.execute(
+            "SELECT default_params, scan_profile FROM ingest_sources WHERE source_type=?",
+            (source_type,),
+        ).fetchone()
+        dp = (
+            default_params_json
+            if default_params_json is not None
+            else (row["default_params"] if row else "{}")
+        )
+        sp = (
+            scan_profile_json
+            if scan_profile_json is not None
+            else (row["scan_profile"] if row else "{}")
+        )
+        conn.execute(
+            "INSERT INTO ingest_sources(source_type, watch_dir, enabled, poll_interval, "
+            "default_params, scan_profile, updated_at) VALUES(?,?,?,?,?,?,?) "
+            "ON CONFLICT(source_type) DO UPDATE "
+            "SET watch_dir=excluded.watch_dir, enabled=excluded.enabled, "
+            "poll_interval=excluded.poll_interval, default_params=excluded.default_params, "
+            "scan_profile=excluded.scan_profile, updated_at=excluded.updated_at",
+            (
+                source_type,
+                watch_dir,
+                1 if enabled else 0,
+                int(poll_interval),
+                dp,
+                sp,
+                _now(),
+            ),
+        )
+
+
+# --- Пользовательские пресеты раскладки (встроенные zoom/plain — в коде) ---
+def list_scan_presets(db_path: Path) -> list[dict]:
+    with get_conn(db_path) as conn:
+        rows = conn.execute("SELECT id, name, body FROM scan_presets ORDER BY name").fetchall()
+    return [dict(r) for r in rows]
+
+
+def create_scan_preset(db_path: Path, name: str, body_json: str) -> str | None:
+    """Создать пресет; None → имя занято (UNIQUE)."""
+    preset_id = new_id()
+    with get_conn(db_path) as conn:
+        try:
+            conn.execute(
+                "INSERT INTO scan_presets(id, name, body, created_at) VALUES(?,?,?,?)",
+                (preset_id, name, body_json, _now()),
+            )
+        except sqlite3.IntegrityError:
+            return None
+    return preset_id
+
+
+def delete_scan_preset(db_path: Path, preset_id: str) -> bool:
+    with get_conn(db_path) as conn:
+        cur = conn.execute("DELETE FROM scan_presets WHERE id=?", (preset_id,))
+        return cur.rowcount > 0
+
+
+def set_ingest_last_scan(db_path: Path, source_type: str) -> None:
+    """Отметить время последнего скана (статус в UI + соблюдение poll_interval)."""
     with get_conn(db_path) as conn:
         conn.execute(
-            "INSERT INTO ingest_sources(id, watch_dir, enabled, poll_interval, default_params, "
-            "updated_at) VALUES(1,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
-            "watch_dir=excluded.watch_dir, enabled=excluded.enabled, "
-            "poll_interval=excluded.poll_interval, default_params=excluded.default_params, "
-            "updated_at=excluded.updated_at",
-            (watch_dir, 1 if enabled else 0, int(poll_interval), default_params_json, _now()),
+            "UPDATE ingest_sources SET last_scan_at=? WHERE source_type=?",
+            (_now(), source_type),
         )
 
 

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-dialogscribe — единый CLI поверх библиотеки ``gigaam_transcriber`` (milestone M1).
+dialogscribe — единый CLI поверх библиотеки ``gigaam_transcriber``.
 
 Тонкая презентационная оболочка: каждая команда зовёт ровно методы библиотеки
 (`transcribe`, `transcribe_batch`, `discover_route_a_tracks`/`transcribe_route_a`,
 voiceprint-галереи). Никакого собственного декод-цикла — единый источник истины
 по пайплайну остаётся в `gigaam_transcriber`.
 
-Контракт потоков: stdout несёт ТОЛЬКО машинный результат (txt/json/srt/vtt при
+Контракт потоков: stdout несёт ТОЛЬКО машинный результат (txt/json/srt/vtt/md при
 отсутствии `-o`); всё декоративное — баннеры, summary, предупреждения, прогресс —
 идёт в stderr. Это позволяет `dialogscribe transcribe a.m4a -f json > out.json`
 и `route-a … -f json > out.json` давать валидный файл.
@@ -15,12 +15,10 @@ voiceprint-галереи). Никакого собственного декод
 Команды:
     dialogscribe transcribe <input> [...]      # один файл
     dialogscribe batch <inputs...> -o OUTDIR   # пакет (progress_callback)
-    dialogscribe route-a <folder> [...]        # подорожечно, без HF_TOKEN
+    dialogscribe route-a <folder> [...]        # подорожечно, без диаризации
     dialogscribe gallery build|list|rm         # голосовые галереи (voiceprint)
-    dialogscribe serve [--host --port]         # web-сервер (появится в M2)
-
-Заменяет три легаси-точки (gigaam-transcribe / -batch / -ui), которые на один
-релиз остаются алиасами.
+    dialogscribe glossary harvest [--apply]    # самообучение глоссария (лог L2)
+    dialogscribe serve [--host --port]         # dev-лаунчер web-API
 """
 
 import os
@@ -44,15 +42,14 @@ from gigaam_transcriber import GigaAMTranscriber, TranscriberError, __version__
 # Утилиты путей (NFC/NFD — macOS HFS+) и форматирование
 # --------------------------------------------------------------------------- #
 def normalize_path(path: str) -> Path:
-    """Нормализация пути для обхода NFD/NFC-расхождений (macOS HFS+)."""
-    p = Path(unicodedata.normalize("NFC", str(path)))
+    """Нормализация пути: `~` + NFD/NFC-расхождения (macOS HFS+)."""
+    p = Path(unicodedata.normalize("NFC", str(path))).expanduser()
     if p.exists():
         return p
     parent = p.parent
     if parent.exists():
         for f in parent.iterdir():
-            if unicodedata.normalize("NFC", f.name) == p.name:
-                return f
+            # Сравнение в одной нормализации покрывает и NFC-, и NFD-хранение имени.
             if unicodedata.normalize("NFD", f.name) == unicodedata.normalize("NFD", p.name):
                 return f
     return p  # не нашли — вернём как есть, Click сам выдаст ошибку существования
@@ -230,14 +227,14 @@ def _print_result_summary(result, output, quiet: bool) -> None:
 
 def _emit_to_stdout(result, output_format: str) -> None:
     """Машинный результат — в stdout (единственное, что туда пишется)."""
-    if output_format == "txt":
-        click.echo(result.to_txt())
-    elif output_format == "json":
-        click.echo(result.to_json())
-    elif output_format == "srt":
-        click.echo(result.to_srt())
-    elif output_format == "vtt":
-        click.echo(result.to_vtt())
+    renderers = {
+        "txt": result.to_txt,
+        "json": result.to_json,
+        "srt": result.to_srt,
+        "vtt": result.to_vtt,
+        "md": result.to_md,
+    }
+    click.echo(renderers[output_format]())
 
 
 # --------------------------------------------------------------------------- #
@@ -266,7 +263,7 @@ def quality_options(func):
             "-f",
             "--format",
             "output_format",
-            type=click.Choice(["txt", "json", "srt", "vtt"]),
+            type=click.Choice(["txt", "json", "srt", "vtt", "md"]),
             default="txt",
             help="Формат вывода",
         ),
@@ -546,11 +543,12 @@ def batch(
     "-f",
     "--format",
     "output_format",
-    type=click.Choice(["txt", "json", "srt", "vtt"]),
+    type=click.Choice(["txt", "json", "srt", "vtt", "md"]),
     default="txt",
     help="Формат вывода",
 )
 @click.option("--glossary/--no-glossary", default=True, help="Канонизация имён/терминов")
+@click.option("--second-opinion", is_flag=True, help="L2 faster-whisper fusion (opt-in, per-track)")
 @click.option("--gap", type=float, default=0.5, help="Макс. пауза склейки (сек)")
 @click.option("-m", "--model", default="v3_e2e_rnnt", help="Модель GigaAM")
 @click.option(
@@ -563,7 +561,17 @@ def batch(
 @click.option("-v", "--verbose", is_flag=True, help="Подробный вывод")
 @guarded
 def route_a(
-    folder, output, speaker_dir, output_format, glossary, gap, model, device, quiet, verbose
+    folder,
+    output,
+    speaker_dir,
+    output_format,
+    glossary,
+    second_opinion,
+    gap,
+    model,
+    device,
+    quiet,
+    verbose,
 ):
     """Транскрипция подорожечной записи: спикер = имя дорожки (без диаризации)."""
     tracks = GigaAMTranscriber.discover_route_a_tracks(folder, speaker_dir=speaker_dir)
@@ -583,8 +591,10 @@ def route_a(
                 output_path=output,
                 output_format=output_format,
                 glossary=glossary,
+                second_opinion=second_opinion,
                 min_segment_gap=gap,
-                progress_callback=progress.callback,
+                # -q — совсем без per-track строк (иначе callback эхал их в stderr)
+                progress_callback=None if quiet else progress.callback,
             )
     failed = result.metadata.get("failed_tracks") or []
     if failed and not quiet:
@@ -686,7 +696,56 @@ def gallery_rm(name):
 
 
 # --------------------------------------------------------------------------- #
-# serve — заглушка (реальный сервер в M2)
+# glossary — самообучение словаря (лог L2-правок → кандидаты в terms)
+# --------------------------------------------------------------------------- #
+@cli.group("glossary")
+def glossary_group():
+    """Управление глоссарием (канонизация имён/терминов)."""
+
+
+@glossary_group.command("harvest")
+@click.option("--min-count", default=3, show_default=True, help="Порог повторов правки")
+@click.option(
+    "--apply",
+    "apply_",
+    is_flag=True,
+    help="Слить кандидатов в config/glossary.json (по умолчанию — только показать)",
+)
+@guarded
+def glossary_harvest(min_count, apply_):
+    """Свернуть накопленный лог L2-правок в кандидаты-terms (под двухъязычным lint).
+
+    Precision-first: по умолчанию только печатает кандидатов (stdout, JSON) для ручной
+    курации; --apply дописывает их в config/glossary.json."""
+    import json as _json
+
+    from gigaam_transcriber._paths import config_dir
+    from gigaam_transcriber.glossary_grow import harvest_log
+
+    grown = harvest_log(min_count=min_count)
+    if not grown:
+        _eecho("Кандидатов нет (лог пуст или ни одна правка не повторилась достаточно раз).")
+        return
+    click.echo(_json.dumps(grown, ensure_ascii=False, indent=2))
+    if not apply_:
+        _eecho(f"Найдено {len(grown)} кандидатов. Добавить в глоссарий: --apply")
+        return
+    gpath = config_dir() / "glossary.json"
+    glossary = _json.loads(gpath.read_text(encoding="utf-8")) if gpath.exists() else {}
+    terms = glossary.setdefault("terms", {})
+    added = {k: v for k, v in grown.items() if k not in terms}
+    terms.update(added)
+    tmp = gpath.parent / (gpath.name + ".tmp")
+    tmp.write_text(
+        _json.dumps(glossary, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(tmp, gpath)
+    _esecho(f"✅ Добавлено {len(added)} terms в {gpath}", fg="green")
+
+
+# --------------------------------------------------------------------------- #
+# serve — dev-лаунчер web-API
 # --------------------------------------------------------------------------- #
 @cli.command()
 @click.option("--host", default="127.0.0.1", help="Хост для прослушивания")
@@ -695,11 +754,11 @@ def gallery_rm(name):
 def serve(host, port, reload):
     """Dev-лаунчер web-API (uvicorn). Прод — через nginx+compose (deploy/).
 
-    Поднимает только процесс api (без модели). gpu/io-воркеры запускаются
-    отдельно (см. deploy/docker-compose.yml). Web-SPA подключится в M4.
+    Поднимает только процесс api (модель не грузится). gpu/io-воркеры запускаются
+    отдельно (см. README, раздел «Web-сервер»).
     """
     try:
-        import uvicorn  # noqa: F401
+        import uvicorn
 
         from gigaam_transcriber.server.config import Settings
     except ImportError:
@@ -723,8 +782,6 @@ def serve(host, port, reload):
         f"DialogScribe API → http://{host}:{port}  "
         "(dev-режим; прод — за nginx по TLS через compose)"
     )
-    import uvicorn
-
     uvicorn.run(
         "gigaam_transcriber.server.app:create_app",
         host=host,

@@ -14,7 +14,8 @@ paths:
   добавляй туда.
 - Команды оборачивай `@guarded`: `TranscriberError`→1, Ctrl-C→130, `ClickException` пробрасывай
   (`UsageError`→2). Ошибки ввода — `click.UsageError`; traceback только при `-v`/`DIALOGSCRIBE_TRACEBACK`.
-- Точки входа — `[project.scripts]`; легаси-алиасы (`gigaam-*`) живут один релиз.
+- Точки входа — `[project.scripts]`: только `dialogscribe` и `dialogscribe-gpu-worker`
+  (легаси-алиасы `gigaam-*` удалены; новые команды — сабкоманды `dialogscribe`).
 - `os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK","1")` ставь вверху модуля ДО `import torch`;
   тяжёлые импорты (rich/uvicorn/voiceprint) — лениво внутри команд.
 - Секреты только из env/`.env` (`os.getenv`/`Settings.from_env()`, `.env` с `override=False`); не хардкодь

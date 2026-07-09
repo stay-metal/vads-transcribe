@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gigaam-transcriber"
 version = "0.1.0"
-description = "Микробиблиотека для транскрипции аудио/видео на базе GigaAM с диаризацией спикеров"
+description = "DialogScribe — транскрипция созвонов на базе GigaAM: диаризация, слой качества, web-интерфейс"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [
-    {name = "GigaAM Transcriber"}
+    {name = "Ponimaiu"}
 ]
 keywords = [
     "transcription",
@@ -52,7 +52,8 @@ dependencies = [
 
 [project.optional-dependencies]
 diarization = [
-    "pyannote.audio>=3.1.0",
+    # Незыблемый пин: 4.0.6 ломает GigaAM VAD ('generator' has no get_timeline).
+    "pyannote.audio==4.0.5",
     "speechbrain>=1.0.0",
     "scikit-learn>=1.3.0",
 ]
@@ -60,6 +61,11 @@ second-opinion = [
     # L2 «второе мнение» — локальный multilingual Whisper (CPU/int8), перечитывает
     # сегменты-кандидаты (с латиницей), fusion правит латиницу/числа под I1.
     "faster-whisper>=1.0",
+]
+onnx = [
+    # ONNX-бэкенды: полнографовый декод (--backend onnx, int8) и split-device
+    # энкодер (--onnx-encoder). CPU/CUDA, не MPS.
+    "onnxruntime>=1.17",
 ]
 server = [
     # Web-сервер (M2+): FastAPI api + Huey 2-очереди + secure-by-default auth.
@@ -82,31 +88,23 @@ dev = [
     "ruff>=0.1.0",
 ]
 all = [
-    "gigaam-transcriber[diarization,second-opinion,dev]",
+    "gigaam-transcriber[diarization,second-opinion,onnx,server,dev]",
 ]
 
 [project.scripts]
-# Единый CLI (M1) — рекомендуемая точка входа.
+# Единый CLI — рекомендуемая точка входа.
 dialogscribe = "gigaam_transcriber.dialogscribe_cli:main"
-# gpu-воркер с boot-guard L5 (M2).
+# gpu-воркер с boot-guard (ровно один держатель модели).
 dialogscribe-gpu-worker = "gigaam_transcriber.server.run_gpu_worker:main"
-# Легаси-точки — алиасы на один релиз, затем будут убраны.
-gigaam-transcribe = "gigaam_transcriber.cli:main"
-gigaam-batch = "gigaam_transcriber.cli:batch_main"
-gigaam-ui = "gigaam_transcriber.cli_ui:main"
 
 [project.urls]
-# TODO: Replace with actual repository URLs
-Homepage = "https://github.com/yaruslove/DialogScribe"
-Documentation = "https://github.com/yaruslove/DialogScribe#readme"
-Repository = "https://github.com/yaruslove/DialogScribe"
+Homepage = "https://github.com/stay-metal/vads-transcribe"
+Documentation = "https://github.com/stay-metal/vads-transcribe#readme"
+Repository = "https://github.com/stay-metal/vads-transcribe"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["gigaam_transcriber*"]
-
-[tool.setuptools.package-data]
-"*" = ["*.yaml", "*.json"]
 
 [tool.black]
 line-length = 100
@@ -131,6 +129,8 @@ exclude = '''
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+# GigaAM — вендоренный клон, не линтим (симметрично exclude у black).
+exclude = ["GigaAM"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "B", "C4", "UP"]
@@ -154,9 +154,12 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
-addopts = "-v --tb=short"
+# requires_model скипается по умолчанию (юнит-прогон не грузит ML-модель и не ходит
+# в сеть); запуск модельных: pytest -m requires_model.
+addopts = "-v --tb=short -m 'not requires_model'"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "requires_gpu: marks tests that require GPU",
     "requires_hf_token: marks tests that require HuggingFace token",
+    "requires_model: marks tests that require the GigaAM model (deselected by default)",
 ]

@@ -4,8 +4,6 @@
 
 from gigaam_transcriber import (
     AudioProcessingError,
-    AudioTooLongError,
-    AudioTooShortError,
     DiarizationError,
     EmptyAudioError,
     EmptyFileError,
@@ -24,31 +22,6 @@ class TestTranscriberError:
         """Базовый тест."""
         error = TranscriberError("Тестовая ошибка")
         assert str(error) == "Тестовая ошибка"
-
-
-class TestAudioTooShortError:
-    """Тесты AudioTooShortError."""
-
-    def test_message(self):
-        """Тест сообщения об ошибке."""
-        error = AudioTooShortError(duration=0.05, min_duration=0.1)
-
-        assert "0.05" in str(error)
-        assert "0.1" in str(error)
-        assert error.duration == 0.05
-        assert error.min_duration == 0.1
-
-
-class TestAudioTooLongError:
-    """Тесты AudioTooLongError."""
-
-    def test_message(self):
-        """Тест сообщения об ошибке."""
-        error = AudioTooLongError(duration=30.0, max_duration=25.0)
-
-        assert "30.0" in str(error)
-        assert "25.0" in str(error)
-        assert "transcribe_longform" in str(error)
 
 
 class TestUnsupportedFormatError:

@@ -149,6 +149,6 @@ def test_terminal_state_not_overwritten(tmp_path):
 def test_list_jobs_orders_recent_first(tmp_path):
     db = _db(tmp_path)
     ids = [repo.create_job(db, mode="single") for _ in range(3)]
-    listed = repo.list_jobs(db)
-    assert len(listed) == 3
+    listed, total = repo.list_jobs_page(db)
+    assert total == 3 and len(listed) == 3
     assert {j["id"] for j in listed} == set(ids)

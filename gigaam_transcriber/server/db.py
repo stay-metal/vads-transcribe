@@ -1,4 +1,5 @@
-"""Слой app.sqlite (WAL). В M2 — только `meta` (session-epoch); jobs/recordings — M3.
+"""Слой app.sqlite (WAL): схема (recordings/jobs/speaker_edits/ingest_*/…), лёгкие
+миграции (ADD COLUMN, пересборка `ingest_sources`) и session-epoch.
 
 Очередь Huey живёт в отдельной БД (huey.sqlite), чтобы запись задач не конфликтовала
 с прикладными записями под конкуренцией (спека §13, риск SQLite-lock).
@@ -10,6 +11,21 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+
+# DDL источников авто-watch — отдельной константой: используется и в _SCHEMA,
+# и в миграции старого singleton-формата (id=1 — только Яндекс).
+_INGEST_SOURCES_DDL = """
+CREATE TABLE IF NOT EXISTS ingest_sources (
+    source_type    TEXT PRIMARY KEY CHECK (source_type IN ('yandex', 'local')),
+    watch_dir      TEXT NOT NULL,
+    enabled        INTEGER NOT NULL DEFAULT 0,
+    poll_interval  INTEGER NOT NULL DEFAULT 300,        -- сек между поллингами
+    default_params TEXT NOT NULL DEFAULT '{}',          -- json-параметры авто-джоб
+    scan_profile   TEXT NOT NULL DEFAULT '{}',          -- json-профиль раскладки (local)
+    last_scan_at   TEXT,                                -- ISO последнего скана (статус в UI)
+    updated_at     TEXT NOT NULL
+);
+"""
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -63,6 +79,13 @@ CREATE TABLE IF NOT EXISTS speaker_edits (
     UNIQUE(job_id, original_label)
 );
 
+CREATE TABLE IF NOT EXISTS text_edits (
+    job_id     TEXT NOT NULL,
+    seg_index  INTEGER NOT NULL,
+    new_text   TEXT NOT NULL,
+    UNIQUE(job_id, seg_index)
+);
+
 -- Яндекс.Диск (M5): singleton-токен (Fernet) + claim-граница ingest.
 CREATE TABLE IF NOT EXISTS yandex_auth (
     id                INTEGER PRIMARY KEY CHECK (id = 1),
@@ -83,14 +106,12 @@ CREATE TABLE IF NOT EXISTS ingest_seen (
     created_at   TEXT NOT NULL
 );
 
--- Авто-watch (M6 v1.x): singleton-конфиг источника + окно стабильности.
-CREATE TABLE IF NOT EXISTS ingest_sources (
-    id             INTEGER PRIMARY KEY CHECK (id = 1),  -- один watch_dir (личная папка)
-    watch_dir      TEXT NOT NULL,
-    enabled        INTEGER NOT NULL DEFAULT 0,
-    poll_interval  INTEGER NOT NULL DEFAULT 300,        -- сек между поллингами
-    default_params TEXT NOT NULL DEFAULT '{}',          -- json-параметры авто-джоб
-    updated_at     TEXT NOT NULL
+-- Пользовательские пресеты раскладки источника (встроенные zoom/plain — в коде).
+CREATE TABLE IF NOT EXISTS scan_presets (
+    id         TEXT PRIMARY KEY,
+    name       TEXT UNIQUE NOT NULL,
+    body       TEXT NOT NULL,               -- json-профиль (та же схема, что scan_profile)
+    created_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS ingest_stability (
@@ -117,10 +138,46 @@ def init_db(db_path: Path) -> None:
     """Создать схему, если её нет, и накатить лёгкие миграции (ADD COLUMN)."""
     conn = connect(db_path)
     try:
+        # Миграция ingest_sources — ДО _SCHEMA: старая таблица (PK id=1) должна
+        # быть пересобрана раньше, чем CREATE IF NOT EXISTS её «узаконит».
+        _migrate_ingest_sources(conn)
         conn.executescript(_SCHEMA)
+        conn.executescript(_INGEST_SOURCES_DDL)
         _migrate(conn)
     finally:
         conn.close()
+
+
+def _migrate_ingest_sources(conn: sqlite3.Connection) -> None:
+    """Старый singleton-формат (id=1, только Яндекс) → PK по source_type.
+
+    Пересборка таблицы (SQLite не меняет PK через ALTER): существующая
+    строка id=1 переезжает как source_type='yandex'. Явная транзакция —
+    соединение в autocommit (isolation_level=None), и крах между RENAME и
+    INSERT молча терял бы Яндекс-конфиг."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(ingest_sources)")}
+    if not cols or "id" not in cols:
+        # Таблицы нет (создаст _INGEST_SOURCES_DDL) или уже формат source_type —
+        # докатываем только новые колонки.
+        if cols and "scan_profile" not in cols:
+            conn.execute(
+                "ALTER TABLE ingest_sources ADD COLUMN scan_profile TEXT NOT NULL DEFAULT '{}'"
+            )
+        return  # старой пересборки не требуется
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("ALTER TABLE ingest_sources RENAME TO ingest_sources_old")
+        conn.execute(_INGEST_SOURCES_DDL)
+        conn.execute(
+            "INSERT INTO ingest_sources(source_type, watch_dir, enabled, poll_interval, "
+            "default_params, updated_at) SELECT 'yandex', watch_dir, enabled, poll_interval, "
+            "default_params, updated_at FROM ingest_sources_old"
+        )
+        conn.execute("DROP TABLE ingest_sources_old")
+        conn.execute("COMMIT")
+    except sqlite3.Error:
+        conn.execute("ROLLBACK")
+        raise
 
 
 def _migrate(conn: sqlite3.Connection) -> None:

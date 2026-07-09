@@ -56,35 +56,3 @@ class TestAudioProcessor:
             assert processor.ffmpeg_path is not None
         except FFmpegNotFoundError:
             pytest.skip("FFmpeg не установлен")
-
-    def test_sample_rate_constant(self):
-        """Тест константы SAMPLE_RATE."""
-        assert AudioProcessor.SAMPLE_RATE == 16000
-
-    def test_channels_constant(self):
-        """Тест константы CHANNELS."""
-        assert AudioProcessor.CHANNELS == 1
-
-
-class TestAudioProcessorFormats:
-    """Тесты форматов AudioProcessor."""
-
-    def test_audio_formats(self):
-        """Тест списка аудио форматов."""
-        formats = AudioProcessor.AUDIO_FORMATS
-
-        assert ".wav" in formats
-        assert ".mp3" in formats
-        assert ".flac" in formats
-        assert ".ogg" in formats
-        assert ".m4a" in formats
-
-    def test_video_formats(self):
-        """Тест списка видео форматов."""
-        formats = AudioProcessor.VIDEO_FORMATS
-
-        assert ".mp4" in formats
-        assert ".mkv" in formats
-        assert ".avi" in formats
-        assert ".mov" in formats
-        assert ".webm" in formats

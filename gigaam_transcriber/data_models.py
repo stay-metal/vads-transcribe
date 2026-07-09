@@ -5,11 +5,12 @@
 import json
 import os
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-OutputFormat = Literal["txt", "json", "srt", "vtt"]
+OutputFormat = Literal["txt", "json", "srt", "vtt", "md"]
 DiarizationMode = Literal["none", "pyannote", "hybrid"]
 
 # Происхождение текста сегмента (по убыванию «сырья» модель→правки), как в custom l0.py.
@@ -69,6 +70,13 @@ class TranscriptionSegment:
     def duration(self) -> float:
         """Длительность сегмента в секундах."""
         return self.end - self.start
+
+    def apply_text_edit(self, text: str, provenance: str) -> None:
+        """Правка текста пост-проходом (глоссарий/L2): единая точка инварианта
+        «после правки seg.text обнуляй seg.words и поднимай provenance»."""
+        self.text = text
+        self.words = None
+        self.provenance = merge_provenance(self.provenance, provenance)
 
     def to_dict(self) -> dict[str, Any]:
         """Преобразование в словарь."""
@@ -293,40 +301,38 @@ class TranscriptionResult:
 
         return "\n".join(lines)
 
+    def to_md(self) -> str:
+        """Markdown-протокол созвона: шапка + реплики «**Спикер** · `тайм`»."""
+        lines = ["# Транскрипт", ""]
+        bits = [_format_time_txt(self.duration)] if self.duration else []
+        if self.model_name:
+            bits.append(self.model_name)
+        bits.append(f"{len(self.segments)} реплик")
+        lines += ["_" + " · ".join(bits) + "_", ""]
+        for seg in self.segments:
+            ts = _format_time_txt(seg.start)
+            lines.append(f"**{seg.speaker}** · `{ts}`" if seg.speaker else f"`{ts}`")
+            lines += ["", seg.text.strip(), ""]
+        return "\n".join(lines).rstrip() + "\n"
+
     def save(self, path: Path | str, format: OutputFormat | str = "auto") -> Path:
-        """
-        Сохранение результата в файл.
-
-        Args:
-            path: Путь к файлу
-            format: Формат вывода ("txt", "json", "srt", "vtt" или "auto")
-                   При "auto" определяется по расширению файла
-
-        Returns:
-            Путь к сохранённому файлу
-        """
+        """Сохранить результат в файл; при format="auto" формат берётся из расширения."""
         path = Path(path)
 
-        # Автоопределение формата по расширению
         if format == "auto":
-            ext = path.suffix.lower()
-            format_map = {
-                ".txt": "txt",
-                ".json": "json",
-                ".srt": "srt",
-                ".vtt": "vtt",
-            }
-            format = format_map.get(ext, "txt")
+            ext_map = {".txt": "txt", ".json": "json", ".srt": "srt", ".vtt": "vtt", ".md": "md"}
+            format = ext_map.get(path.suffix.lower(), "txt")
 
-        # Генерация контента
-        if format == "json":
-            content = self.to_json()
-        elif format == "srt":
-            content = self.to_srt()
-        elif format == "vtt":
-            content = self.to_vtt()
-        else:  # txt
-            content = self.to_txt()
+        renderers: dict[str, Callable[[], str]] = {
+            "txt": self.to_txt,
+            "json": self.to_json,
+            "srt": self.to_srt,
+            "vtt": self.to_vtt,
+            "md": self.to_md,
+        }
+        if format not in renderers:
+            raise ValueError(f"Неизвестный формат вывода: {format!r}")
+        content = renderers[format]()
 
         # Сохранение (атомарно: tmp + os.replace — краш-безопасно)
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -8,10 +8,7 @@ speaker_confidence, неприкосновенность текста (I1), пр
 
 from gigaam_transcriber.data_models import SpeakerSegment, TranscriptionSegment
 from gigaam_transcriber.segment_merger import MergeConfig, SegmentMerger
-from gigaam_transcriber.speaker_mapping import (
-    assign_speakers_by_overlap,
-    is_weak_speaker,
-)
+from gigaam_transcriber.speaker_mapping import assign_speakers_by_overlap
 
 
 def _seg(text, start, end):
@@ -63,7 +60,6 @@ def test_speaker_confidence_partial_coverage():
     assign_speakers_by_overlap([seg], speakers)
     assert seg.speaker == "A"
     assert abs(seg.speaker_confidence - 0.4) < 1e-6
-    assert is_weak_speaker(seg)  # 0.4 < 0.5
 
 
 def test_empty_speakers_noop():

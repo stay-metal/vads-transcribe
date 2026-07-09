@@ -9,50 +9,10 @@ import io
 import pytest
 from fastapi.testclient import TestClient
 
-from gigaam_transcriber.data_models import TranscriptionResult, TranscriptionSegment
 from gigaam_transcriber.server import media
 from gigaam_transcriber.server.app import create_app
-from gigaam_transcriber.server.config import Settings
 from gigaam_transcriber.server.job_runner import process_job
-from gigaam_transcriber.server.security import hash_password
-
-PASSWORD = "correct-horse-battery-staple"
-WAV = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 32
-
-
-class FakeTranscriber:
-    def transcribe_route_a(
-        self, tracks, glossary=True, min_segment_gap=0.5, progress_callback=None
-    ):
-        names = list(tracks)
-        if progress_callback:
-            for i, n in enumerate(names, 1):
-                progress_callback(i, len(names), n)
-        segs = [
-            TranscriptionSegment(text=f"реплика {n}", start=float(i), end=float(i) + 1, speaker=n)
-            for i, n in enumerate(names)
-        ]
-        return TranscriptionResult(
-            text=" ".join(s.text for s in segs),
-            segments=segs,
-            duration=10.0,
-            language="ru",
-            model_name="fake",
-            processing_time=1.0,
-            metadata={"route": "A", "tracks": names},
-        )
-
-    def transcribe(self, input_path, diarization="pyannote", **kw):
-        segs = [TranscriptionSegment(text="привет", start=0.0, end=1.0, speaker="SPEAKER_00")]
-        return TranscriptionResult(
-            text="привет",
-            segments=segs,
-            duration=5.0,
-            language="ru",
-            model_name="fake",
-            processing_time=0.5,
-            metadata={},
-        )
+from tests.conftest import WAV, FakeTranscriber, login_client, server_settings
 
 
 @pytest.fixture(autouse=True)
@@ -70,17 +30,7 @@ def _no_real_ffmpeg(monkeypatch, tmp_path):
 
 
 def _settings(tmp_path, **over):
-    base = {
-        "user": "admin",
-        "password_hash": hash_password(PASSWORD),
-        "session_key": "session-key-aaaaaaaaaaaaaaaa",
-        "fernet_key": "fernet-key-bbbbbbbbbbbbbbbb",
-        "data_dir": tmp_path,
-        "cookie_secure": False,
-        "require_https": False,
-    }
-    base.update(over)
-    return Settings(**base)
+    return server_settings(tmp_path, **over)
 
 
 def _make(tmp_path, sync=True):
@@ -92,9 +42,7 @@ def _make(tmp_path, sync=True):
             process_job(settings, job_id, transcriber)
         return "task-" + job_id
 
-    client = TestClient(create_app(settings, enqueue=enqueue))
-    client.post("/api/auth/login", data={"username": "admin", "password": PASSWORD})
-    return client
+    return login_client(create_app(settings, enqueue=enqueue))
 
 
 def _file(name, data=WAV):
@@ -186,6 +134,36 @@ def test_cancel_only_queued(tmp_path):
     assert c.post(f"/api/jobs/{job_id}/cancel").status_code == 409
 
 
+def test_api_restart_with_live_worker_keeps_running_job(tmp_path):
+    # Рестарт api при живом gpu-воркере (есть ready-флаг) НЕ убивает 'asr'-джобу.
+    from gigaam_transcriber.server import repository as repo
+    from gigaam_transcriber.server.db import init_db
+
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    job_id = repo.create_job(settings.db_path, mode="single", source="upload")
+    repo.claim_job(settings.db_path, job_id)  # queued→asr
+    settings.ready_flag_path.parent.mkdir(parents=True, exist_ok=True)
+    settings.ready_flag_path.write_text("ready")
+    create_app(settings)
+    assert repo.get_job(settings.db_path, job_id)["state"] == "asr"
+
+
+def test_api_restart_without_worker_reconciles_orphan(tmp_path):
+    # Нет ready-флага (воркер мёртв) → осиротевшая in-flight джоба честно в error.
+    from gigaam_transcriber.server import repository as repo
+    from gigaam_transcriber.server.db import init_db
+
+    settings = _settings(tmp_path)
+    init_db(settings.db_path)
+    job_id = repo.create_job(settings.db_path, mode="single", source="upload")
+    repo.claim_job(settings.db_path, job_id)
+    settings.ready_flag_path.unlink(missing_ok=True)
+    create_app(settings)
+    job = repo.get_job(settings.db_path, job_id)
+    assert job["state"] == "error" and job["error_code"] == "worker_restart"
+
+
 def test_jobs_require_auth(tmp_path):
     settings = _settings(tmp_path)
     c = TestClient(create_app(settings, enqueue=lambda j: None))
@@ -224,9 +202,7 @@ def _make_with_settings(tmp_path, transcriber, sync=True):
             process_job(settings, job_id, transcriber)
         return "task-" + job_id
 
-    client = TestClient(create_app(settings, enqueue=enqueue))
-    client.post("/api/auth/login", data={"username": "admin", "password": PASSWORD})
-    return client, settings
+    return login_client(create_app(settings, enqueue=enqueue)), settings
 
 
 def test_execution_error_sets_error_state(tmp_path):
@@ -291,6 +267,61 @@ def test_result_carries_original_speaker_and_rerename(tmp_path):
     # и в скачанном txt
     txt = c.get(f"/api/jobs/{job_id}/download", params={"format": "txt"}).text
     assert "Алиса Петрова" in txt
+
+
+def test_jobs_list_date_filter(tmp_path):
+    # Диапазон дат по created_at: полуинтервал [date_from, date_to), границы в UTC.
+    from gigaam_transcriber.server.db import get_conn
+
+    c, settings = _make_with_settings(tmp_path, FakeTranscriber())
+    ids = []
+    for _ in range(2):
+        up = c.post("/api/uploads", files=[_file("mix.wav")]).json()
+        jid = c.post(
+            "/api/jobs", json={"recording_id": up["recording_id"], "diarization": "none"}
+        ).json()["job_id"]
+        ids.append(jid)
+    # проставляем разные даты создания
+    with get_conn(settings.db_path) as conn:
+        conn.execute(
+            "UPDATE jobs SET created_at=? WHERE id=?", ("2026-01-10T09:00:00+00:00", ids[0])
+        )
+        conn.execute(
+            "UPDATE jobs SET created_at=? WHERE id=?", ("2026-03-20T09:00:00+00:00", ids[1])
+        )
+
+    # только январь → первый джоб
+    jan = c.get(
+        "/api/jobs",
+        params={
+            "scope": "done",
+            "date_from": "2026-01-01T00:00:00Z",
+            "date_to": "2026-02-01T00:00:00Z",
+        },
+    ).json()
+    assert {j["id"] for j in jan["jobs"]} == {ids[0]}
+    assert jan["total"] == 1
+
+    # широкий диапазон → оба
+    both = c.get(
+        "/api/jobs",
+        params={
+            "scope": "done",
+            "date_from": "2026-01-01T00:00:00Z",
+            "date_to": "2026-12-31T00:00:00Z",
+        },
+    ).json()
+    assert {j["id"] for j in both["jobs"]} == set(ids)
+
+    # верхняя граница исключительна: до 2026-03-20 09:00 → только январь
+    upto = c.get(
+        "/api/jobs",
+        params={"scope": "done", "date_to": "2026-03-20T09:00:00Z"},
+    ).json()
+    assert {j["id"] for j in upto["jobs"]} == {ids[0]}
+
+    # битая дата → 400
+    assert c.get("/api/jobs", params={"date_from": "не-дата"}).status_code == 400
 
 
 class CapturingTranscriber(FakeTranscriber):
@@ -408,3 +439,60 @@ def test_endpoint_coverage_list_audio_srt(tmp_path):
 
     srt = c.get(f"/api/jobs/{job_id}/download", params={"format": "srt"}).text
     assert "-->" in srt
+
+
+def test_jobs_list_v2_filters_search_counts(tmp_path, monkeypatch):
+    # Страница джоб: title из записи, scope-фильтры, поиск, счётчики, пагинация.
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    c = _make(tmp_path)
+    for name in ("Дейли планёрка", "Синк команды"):
+        up = c.post("/api/uploads", files=[_file("Алиса.wav"), _file("Боб.wav")]).json()
+        # title записи задаётся при создании из имени первой дорожки
+        del name
+        c.post("/api/jobs", json={"recording_id": up["recording_id"]})
+
+    r = c.get("/api/jobs").json()
+    assert r["total"] == 2 and len(r["jobs"]) == 2
+    assert r["counts"]["done"] == 2 and r["counts"]["active"] == 0
+    assert all(j["title"] for j in r["jobs"])  # название записи доехало
+    assert all(j["started_at"] for j in r["jobs"])
+
+    # scope-фильтры
+    assert c.get("/api/jobs", params={"scope": "done"}).json()["total"] == 2
+    assert c.get("/api/jobs", params={"scope": "error"}).json()["total"] == 0
+    assert c.get("/api/jobs", params={"scope": "мусор"}).status_code == 400
+
+    # поиск по подстроке id
+    jid = r["jobs"][0]["id"]
+    hits = c.get("/api/jobs", params={"q": jid[:8]}).json()
+    assert hits["total"] == 1 and hits["jobs"][0]["id"] == jid
+
+    # пагинация
+    page = c.get("/api/jobs", params={"limit": 1, "offset": 1}).json()
+    assert page["total"] == 2 and len(page["jobs"]) == 1
+
+
+def test_jobs_list_avg_rtf_and_duration_upfront(tmp_path, monkeypatch):
+    # duration_sec проставляется ДО обработки (ffprobe), avg_rtf считается по done.
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setattr(media, "probe_duration", lambda p, **kw: 120.0)
+    c = _make(tmp_path, sync=False)  # не обрабатываем — джоба остаётся queued
+    up = c.post("/api/uploads", files=[_file("Алиса.wav"), _file("Боб.wav")]).json()
+    c.post("/api/jobs", json={"recording_id": up["recording_id"]})
+    r = c.get("/api/jobs").json()
+    job = r["jobs"][0]
+    assert job["state"] == "queued"
+    assert job["duration_sec"] == 120.0  # известна заранее — UI посчитает ETA
+    assert job["queue_position"] == 1
+    assert r["counts"]["queued"] == 1
+
+
+def test_jobs_search_escapes_like_wildcards(tmp_path, monkeypatch):
+    # «_» и «%» в поиске — литералы, а не шаблон (иначе «_» матчит всё).
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    c = _make(tmp_path)
+    up = c.post("/api/uploads", files=[_file("Алиса.wav"), _file("Боб.wav")]).json()
+    c.post("/api/jobs", json={"recording_id": up["recording_id"]})
+    assert c.get("/api/jobs", params={"q": "_"}).json()["total"] == 0
+    assert c.get("/api/jobs", params={"q": "%"}).json()["total"] == 0
+    assert c.get("/api/jobs", params={"q": "Алиса"}).json()["total"] == 1

@@ -16,15 +16,33 @@ from gigaam_transcriber.server.workers import (
 )
 
 
-def test_boot_guard_accepts_single_process():
-    assert_gpu_worker_config("process", 1)  # не бросает
+@pytest.mark.parametrize(
+    "platform,worker_type",
+    [("linux", "process"), ("darwin", "process"), ("darwin", "thread")],
+)
+def test_boot_guard_accepts_single_holder(monkeypatch, platform, worker_type):
+    # process (везде) и thread (только macOS/F6) с -w 1 — один держатель модели.
+    from gigaam_transcriber.server import workers
+
+    monkeypatch.setattr(workers.sys, "platform", platform)
+    assert_gpu_worker_config(worker_type, 1)  # не бросает
 
 
 @pytest.mark.parametrize(
-    "worker_type,workers",
-    [("process", 2), ("thread", 1), ("greenlet", 1), ("process", 0), ("thread", 4)],
+    "platform,worker_type,workers",
+    [
+        ("linux", "process", 2),
+        ("linux", "thread", 1),  # thread — только darwin (нет изоляции/авто-рестарта)
+        ("linux", "greenlet", 1),
+        ("darwin", "gevent", 1),
+        ("linux", "process", 0),
+        ("darwin", "thread", 4),
+    ],
 )
-def test_boot_guard_rejects_multi_or_non_process(worker_type, workers):
+def test_boot_guard_rejects_multi_or_greenlet(monkeypatch, platform, worker_type, workers):
+    from gigaam_transcriber.server import workers
+
+    monkeypatch.setattr(workers.sys, "platform", platform)
     with pytest.raises(RuntimeError):
         assert_gpu_worker_config(worker_type, workers)
 
@@ -91,7 +109,7 @@ def test_run_gpu_worker_boot_guard_aborts_multi_worker():
     assert "RuntimeError" in r.stderr
 
 
-def test_run_gpu_worker_boot_guard_aborts_thread():
+def test_run_gpu_worker_boot_guard_aborts_greenlet():
     import subprocess
     import sys
 
@@ -101,7 +119,7 @@ def test_run_gpu_worker_boot_guard_aborts_thread():
             "-m",
             "gigaam_transcriber.server.run_gpu_worker",
             "-k",
-            "thread",
+            "greenlet",
             "-w",
             "1",
         ],
@@ -111,6 +129,100 @@ def test_run_gpu_worker_boot_guard_aborts_thread():
     )
     assert r.returncode != 0
     assert "RuntimeError" in r.stderr
+
+
+@pytest.mark.parametrize(
+    "platform,requested,expected",
+    [
+        ("darwin", "process", "thread"),  # F6: Metal/MPS не живёт в fork
+        ("darwin", "thread", "thread"),
+        ("linux", "process", "process"),  # прод не затронут
+        ("linux", "thread", "thread"),
+    ],
+)
+def test_effective_worker_type(monkeypatch, platform, requested, expected):
+    from gigaam_transcriber.server import run_gpu_worker
+
+    monkeypatch.setattr(run_gpu_worker.sys, "platform", platform)
+    assert run_gpu_worker._effective_worker_type(requested) == expected
+
+
+def test_main_clears_stale_ready_flag_before_consumer(tmp_path, monkeypatch):
+    # F8: stale-флаг убитого воркера лгал «ready» — лаунчер чистит его до старта.
+    import sys as real_sys
+
+    import huey.consumer as huey_consumer
+
+    from gigaam_transcriber.server import run_gpu_worker
+    from gigaam_transcriber.server.workers import READY_TOKEN_ENV
+
+    monkeypatch.setenv("DIALOGSCRIBE_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv(READY_TOKEN_ENV, "sentinel")  # main перепишет; restore после теста
+    monkeypatch.setattr(real_sys, "argv", list(real_sys.argv))  # main нормализует argv
+    settings = Settings(data_dir=tmp_path, session_key="x")
+    write_ready_flag(settings.ready_flag_path)
+
+    ran = {}
+
+    class FakeConsumer:
+        def __init__(self, huey_obj, workers, worker_type):
+            ran["workers"] = workers
+            ran["worker_type"] = worker_type
+
+        def run(self):
+            ran["run"] = True
+
+    monkeypatch.setattr(huey_consumer, "Consumer", FakeConsumer)
+    monkeypatch.setattr(run_gpu_worker.sys, "platform", "linux")  # без darwin-подмены
+
+    run_gpu_worker.main(["-k", "process", "-w", "1"])
+
+    assert not settings.ready_flag_path.exists()  # stale-флаг вычищен
+    assert ran == {"workers": 1, "worker_type": "process", "run": True}
+    # SIGHUP-restart (os.execl python *sys.argv) должен получить -m-форму.
+    assert real_sys.argv[:2] == ["-m", "gigaam_transcriber.server.run_gpu_worker"]
+
+
+def test_clear_ready_flag_respects_owner_token(tmp_path, monkeypatch):
+    # Перекрывающийся рестарт: чужой флаг (нового воркера) atexit-очистка не трогает.
+    from gigaam_transcriber.server.workers import READY_TOKEN_ENV
+
+    settings = Settings(data_dir=tmp_path, session_key="x")
+    monkeypatch.setenv(READY_TOKEN_ENV, "новый-воркер")
+    write_ready_flag(settings.ready_flag_path)
+
+    clear_ready_flag(settings.ready_flag_path, only_token="старый-воркер")
+    assert settings.ready_flag_path.exists()  # чужой токен — не снят
+
+    clear_ready_flag(settings.ready_flag_path, only_token="новый-воркер")
+    assert not settings.ready_flag_path.exists()  # свой — снят
+
+
+def test_worker_exit_clears_ready_flag(tmp_path):
+    # F8: выход процесса воркера снимает ready-флаг (atexit в лаунчере — huey-хук
+    # on_shutdown не покрывает SIGTERM: non-graceful stop бросает daemon-треды).
+    # Флаг пишем ПОСЛЕ main() (имитация warm_up) — снять его может только atexit.
+    import os
+    import subprocess
+    import sys
+
+    env = {**os.environ, "DIALOGSCRIBE_DATA_DIR": str(tmp_path)}
+    code = (
+        "import huey.consumer as hc;"
+        "hc.Consumer = type('FakeConsumer', (), "
+        "{'__init__': lambda self, *a, **kw: None, 'run': lambda self: None});"
+        "from gigaam_transcriber.server import run_gpu_worker as rgw;"
+        "rgw.main(['-k', 'process', '-w', '1']);"
+        "from gigaam_transcriber.server.config import Settings;"
+        "from gigaam_transcriber.server.workers import write_ready_flag;"
+        "write_ready_flag(Settings.from_env().ready_flag_path);"
+        "print('OK')"
+    )
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
+    assert r.returncode == 0, r.stderr
+    assert "OK" in r.stdout
+    settings = Settings(data_dir=tmp_path, session_key="x")
+    assert not settings.ready_flag_path.exists()  # atexit снял флаг на выходе
 
 
 def test_ensure_forkable_forces_fork_on_darwin(monkeypatch):

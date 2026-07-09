@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -20,17 +21,29 @@ from pydantic import BaseModel
 from . import media
 from .auth import require_session
 from .repository import (
+    avg_recent_rtf,
     cancel_job_if_queued,
     create_job,
+    done_duration_total,
     get_job,
+    get_meta,
     get_recording,
     get_speaker_edits,
-    list_jobs,
+    get_text_edits,
+    jobs_state_counts,
+    list_jobs_page,
+    queued_positions,
     set_job_dirs,
+    set_job_duration,
     set_job_huey_task,
+    set_meta,
     set_recording_latest_job,
     set_speaker_edit,
+    set_text_edit,
 )
+from .transcripts import load_result_with_overlay, render_body
+
+_FORMATS = ("md", "txt", "json", "srt", "vtt")
 
 router = APIRouter()
 
@@ -58,6 +71,15 @@ class SpeakersIn(BaseModel):
     edits: dict  # {original_label: new_label}
 
 
+class SegmentEditIn(BaseModel):
+    index: int
+    text: str
+
+
+class SettingsIn(BaseModel):
+    transcript_format: str
+
+
 def _public_job(job: dict) -> dict:
     return {
         "id": job["id"],
@@ -69,8 +91,35 @@ def _public_job(job: dict) -> dict:
         "device_fallback": job["device_fallback"],
         "duration_sec": job["duration_sec"],
         "created_at": job["created_at"],
+        "started_at": job.get("started_at"),
         "finished_at": job["finished_at"],
+        "source": job.get("source"),
+        "title": job.get("title"),
+        "track_count": job.get("track_count"),
     }
+
+
+def _canon_date_bound(s: str) -> str:
+    """ISO-8601 (в т.ч. `…Z`) → каноничный UTC-isoformat для сравнения с
+    `created_at`. Пустая строка сюда не попадает (её отсекает роут)."""
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(400, "date_from/date_to: ожидается ISO-8601") from None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat()
+
+
+# Активные (нетерминальные) состояния — для scope-фильтра списка.
+_ACTIVE_STATES = ("queued", "preclean", "vad", "diarization", "asr", "quality", "formatting")
+_SCOPES: dict[str, tuple[str, ...]] = {
+    "active": _ACTIVE_STATES,
+    "done": ("done",),
+    "error": ("error",),
+    "canceled": ("canceled",),
+    "terminal": ("done", "error", "canceled"),
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -114,6 +163,11 @@ def submit_job(
         )
 
     job_id = create_job(db, mode=mode, source="upload", recording_id=rec["id"], params=params)
+    # Длительность аудио — заранее (ETA в UI); финиш перезапишет фактической.
+    if rec["tracks"]:
+        dur = media.probe_duration(Path(rec["tracks"][0]["path"]))
+        if dur:
+            set_job_duration(db, job_id, dur)
     data_dir = Path(settings.data_dir)
     output_dir = data_dir / "outputs" / job_id
     work_dir = data_dir / "work" / job_id
@@ -139,9 +193,54 @@ def submit_job(
 # read / progress
 # --------------------------------------------------------------------------- #
 @router.get("/api/jobs")
-def list_all(request: Request, user: str = Depends(require_session)) -> dict:
+def list_all(
+    request: Request,
+    q: str = "",
+    scope: str = "all",
+    date_from: str = "",
+    date_to: str = "",
+    limit: int = 50,
+    offset: int = 0,
+    user: str = Depends(require_session),
+) -> dict:
+    """Страница джоб для UI: поиск/фильтр статуса/дат/пагинация + сводка.
+
+    Сводка (counts/avg_rtf/позиции очереди) нужна дашборду для чипов-счётчиков
+    и оценки «сколько осталось» (ETA = duration × avg_rtf − прошло). Диапазон
+    дат — по `created_at` (границы каноникализируются в UTC), полуинтервал
+    `[date_from, date_to)`."""
+    if scope not in ("all", *_SCOPES):
+        raise HTTPException(400, "scope: all|active|done|error|canceled|terminal")
     settings = request.app.state.settings
-    return {"jobs": [_public_job(j) for j in list_jobs(settings.db_path)]}
+    jobs, total = list_jobs_page(
+        settings.db_path,
+        q=q,
+        states=_SCOPES.get(scope),
+        date_from=_canon_date_bound(date_from) if date_from else None,
+        date_to=_canon_date_bound(date_to) if date_to else None,
+        limit=max(1, min(limit, 200)),
+        offset=max(0, offset),
+    )
+    positions = queued_positions(settings.db_path)
+    payload = []
+    for j in jobs:
+        pub = _public_job(j)
+        pub["queue_position"] = positions.get(j["id"])
+        payload.append(pub)
+    counts = jobs_state_counts(settings.db_path)
+    return {
+        "jobs": payload,
+        "total": total,
+        "counts": {
+            "active": sum(counts.get(s, 0) for s in _ACTIVE_STATES),
+            "queued": counts.get("queued", 0),
+            "done": counts.get("done", 0),
+            "error": counts.get("error", 0),
+            "canceled": counts.get("canceled", 0),
+        },
+        "avg_rtf": avg_recent_rtf(settings.db_path),
+        "done_duration_sec": done_duration_total(settings.db_path),
+    }
 
 
 @router.get("/api/jobs/{job_id}")
@@ -150,7 +249,13 @@ def get_one(job_id: str, request: Request, user: str = Depends(require_session))
     job = get_job(settings.db_path, job_id)
     if job is None:
         raise HTTPException(404, "Джоба не найдена")
-    return _public_job(job)
+    rec = get_recording(settings.db_path, job["recording_id"]) if job["recording_id"] else None
+    if rec is not None:
+        job["title"] = rec.get("title")
+        job["track_count"] = rec.get("track_count")
+    pub = _public_job(job)
+    pub["queue_position"] = queued_positions(settings.db_path).get(job_id)
+    return pub
 
 
 @router.get("/api/jobs/{job_id}/events")
@@ -192,38 +297,28 @@ def cancel(job_id: str, request: Request, user: str = Depends(require_session)) 
     job = get_job(settings.db_path, job_id)
     if job is None:
         raise HTTPException(404, "Джоба не найдена")
-    # Cancel честно только для queued (running доходит до конца — спека §7).
+    # Cancel честно только для queued (спека §7). CAS достаточно: running-джобу не
+    # трогаем — huey-задача доотработает и запишет результат (revoke не заведён).
     if not cancel_job_if_queued(settings.db_path, job_id):
         raise HTTPException(409, "Отмена возможна только для джобы в очереди")
-    revoke = getattr(request.app.state, "revoke", None)
-    if revoke is not None and job["huey_task_id"]:
-        revoke(job["huey_task_id"])
     return {"job_id": job_id, "state": "canceled"}
 
 
 # --------------------------------------------------------------------------- #
 # result / speakers / download / audio
 # --------------------------------------------------------------------------- #
-def _load_result_with_overlay(job: dict, edits: dict) -> dict:
-    """Загрузить result.json и наложить speaker-edits (без мутации файла)."""
-    path = job.get("result_json_path")
-    if not path or not Path(path).exists():
+def _overlay_for(settings, job: dict) -> dict:
+    """result.json с наложенными правками; 409, если результат ещё не готов.
+
+    Чистая логика оверлея/рендера — в server/transcripts.py (юнит-тестируема
+    без HTTP); здесь только HTTP-детали."""
+    data = load_result_with_overlay(
+        job,
+        get_speaker_edits(settings.db_path, job["id"]),
+        get_text_edits(settings.db_path, job["id"]),
+    )
+    if data is None:
         raise HTTPException(409, "Результат ещё не готов")
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
-    for seg in data.get("segments", []):
-        spk = seg.get("speaker")
-        # стабильный сырой ярлык — ключ правки (чтобы повторное переименование не терялось)
-        seg["original_speaker"] = spk
-        if spk in edits:
-            seg["speaker"] = edits[spk]
-            seg["provenance"] = "human"
-    meta = data.get("metadata")
-    if isinstance(meta, dict):
-        # не отдаём клиенту серверные пути источника
-        meta.pop("source", None)
-        # пересчёт после наложения: speakers_count = число фактических меток
-        distinct = {s.get("speaker") for s in data.get("segments", []) if s.get("speaker")}
-        meta["speakers_count"] = len(distinct)
     return data
 
 
@@ -233,8 +328,7 @@ def get_result(job_id: str, request: Request, user: str = Depends(require_sessio
     job = get_job(settings.db_path, job_id)
     if job is None:
         raise HTTPException(404, "Джоба не найдена")
-    edits = get_speaker_edits(settings.db_path, job_id)
-    return _load_result_with_overlay(job, edits)
+    return _overlay_for(settings, job)
 
 
 @router.put("/api/jobs/{job_id}/speakers")
@@ -245,11 +339,32 @@ def put_speakers(
     job = get_job(settings.db_path, job_id)
     if job is None:
         raise HTTPException(404, "Джоба не найдена")
+    # Сначала валидируем ВЕСЬ payload, потом пишем: иначе частично-невалидная
+    # партия оставила бы первые правки применёнными, а хвост — отклонённым.
+    cleaned = {}
     for original, new in payload.edits.items():
         if not str(new).strip():
             raise HTTPException(400, "Пустое имя спикера")
-        set_speaker_edit(settings.db_path, job_id, original, str(new).strip())
+        cleaned[original] = str(new).strip()
+    for original, new in cleaned.items():
+        set_speaker_edit(settings.db_path, job_id, original, new)
     return {"job_id": job_id, "edits": get_speaker_edits(settings.db_path, job_id)}
+
+
+@router.put("/api/jobs/{job_id}/segments")
+def put_segment(
+    job_id: str, payload: SegmentEditIn, request: Request, user: str = Depends(require_session)
+) -> dict:
+    settings = request.app.state.settings
+    job = get_job(settings.db_path, job_id)
+    if job is None:
+        raise HTTPException(404, "Джоба не найдена")
+    if payload.index < 0:
+        raise HTTPException(400, "Некорректный индекс реплики")
+    if not payload.text.strip():
+        raise HTTPException(400, "Пустой текст реплики")
+    set_text_edit(settings.db_path, job_id, payload.index, payload.text.strip())
+    return {"job_id": job_id, "index": payload.index}
 
 
 @router.get("/api/jobs/{job_id}/audio")
@@ -272,8 +387,8 @@ def download(
     format: str = "txt",
     user: str = Depends(require_session),
 ):
-    if format not in ("txt", "json", "srt", "vtt", "l0", "sha256"):
-        raise HTTPException(400, "Формат: txt|json|srt|vtt|l0|sha256")
+    if format not in (*_FORMATS, "l0", "sha256"):
+        raise HTTPException(400, "Формат: md|txt|json|srt|vtt|l0|sha256")
     settings = request.app.state.settings
     job = get_job(settings.db_path, job_id)
     if job is None:
@@ -291,43 +406,48 @@ def download(
         media_type = "application/x-ndjson" if format == "l0" else "text/plain; charset=utf-8"
         return FileResponse(fpath, media_type=media_type, filename=fname)
 
-    edits = get_speaker_edits(settings.db_path, job_id)
-    data = _load_result_with_overlay(job, edits)
-
-    if format == "json":
-        body = json.dumps(data, ensure_ascii=False, indent=2)
-        media_type = "application/json"
-    else:
-        body = _render(data, format)
-        media_type = "text/plain; charset=utf-8"
+    data = _overlay_for(settings, job)
+    body, media_type = render_body(data, format)
     headers = {"Content-Disposition": f'attachment; filename="transcript.{format}"'}
     return Response(content=body, media_type=media_type, headers=headers)
 
 
-def _render(data: dict, fmt: str) -> str:
-    """Рендер txt/srt/vtt из overlay-данных через библиотечный TranscriptionResult."""
-    from gigaam_transcriber.data_models import TranscriptionResult, TranscriptionSegment
+@router.post("/api/jobs/{job_id}/write")
+def write_transcript(
+    job_id: str, request: Request, format: str = "", user: str = Depends(require_session)
+) -> dict:
+    """Записать транскрипт с правками на диск (в output_dir джобы) — тот же
+    файл, что создал пайплайн. Формат — из запроса или дефолтный из настроек."""
+    settings = request.app.state.settings
+    job = get_job(settings.db_path, job_id)
+    if job is None:
+        raise HTTPException(404, "Джоба не найдена")
+    out_dir = job.get("output_dir")
+    if not out_dir:
+        raise HTTPException(409, "Папка транскрипта недоступна")
+    fmt = format or get_meta(settings.db_path, "transcript_format", "md") or "md"
+    if fmt not in _FORMATS:
+        raise HTTPException(400, "Формат: md|txt|json|srt|vtt")
+    data = _overlay_for(settings, job)
+    body, _ = render_body(data, fmt)
+    dest = Path(out_dir) / f"transcript.{fmt}"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(body, encoding="utf-8")
+    return {"written": dest.name, "format": fmt}
 
-    segs = [
-        TranscriptionSegment(
-            text=s.get("text", ""),
-            start=float(s.get("start", 0.0)),
-            end=float(s.get("end", 0.0)),
-            speaker=s.get("speaker"),
-        )
-        for s in data.get("segments", [])
-    ]
-    meta = data.get("metadata", {})
-    result = TranscriptionResult(
-        text=data.get("full_text", " ".join(s.text for s in segs)),
-        segments=segs,
-        duration=float(meta.get("duration", 0.0) or 0.0),
-        language=meta.get("language", "ru"),
-        model_name=meta.get("model", meta.get("model_name", "")),
-        processing_time=0.0,
-    )
-    if fmt == "txt":
-        return result.to_txt()
-    if fmt == "srt":
-        return result.to_srt()
-    return result.to_vtt()
+
+@router.get("/api/settings")
+def get_settings(request: Request, user: str = Depends(require_session)) -> dict:
+    settings = request.app.state.settings
+    return {"transcript_format": get_meta(settings.db_path, "transcript_format", "md") or "md"}
+
+
+@router.put("/api/settings")
+def put_settings(
+    payload: SettingsIn, request: Request, user: str = Depends(require_session)
+) -> dict:
+    if payload.transcript_format not in _FORMATS:
+        raise HTTPException(400, "Формат: md|txt|json|srt|vtt")
+    settings = request.app.state.settings
+    set_meta(settings.db_path, "transcript_format", payload.transcript_format)
+    return {"transcript_format": payload.transcript_format}

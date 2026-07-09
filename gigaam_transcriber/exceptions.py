@@ -9,36 +9,16 @@ class TranscriberError(Exception):
     pass
 
 
-class AudioTooShortError(TranscriberError):
-    """Аудио слишком короткое для обработки."""
-
-    def __init__(self, duration: float, min_duration: float = 0.1):
-        self.duration = duration
-        self.min_duration = min_duration
-        super().__init__(
-            f"Аудио слишком короткое ({duration:.2f}с). "
-            f"Минимальная длительность: {min_duration}с"
-        )
-
-
-class AudioTooLongError(TranscriberError):
-    """Аудио превышает лимит без использования longform."""
-
-    def __init__(self, duration: float, max_duration: float = 25.0):
-        self.duration = duration
-        self.max_duration = max_duration
-        super().__init__(
-            f"Аудио слишком длинное ({duration:.2f}с) для метода transcribe(). "
-            f"Максимальная длительность: {max_duration}с. "
-            f"Используйте transcribe_longform() для длинных файлов."
-        )
-
-
 class UnsupportedFormatError(TranscriberError):
-    """Неподдерживаемый формат файла."""
+    """Неподдерживаемый формат файла.
 
-    SUPPORTED_AUDIO = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".wma", ".opus"}
-    SUPPORTED_VIDEO = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".wmv", ".flv"}
+    Наборы расширений здесь — единый источник истины: их импортируют
+    AudioProcessor (валидация входа) и сервер (фильтры ingest); модуль
+    exceptions лёгкий, поэтому его можно тянуть из любого слоя.
+    """
+
+    SUPPORTED_AUDIO = {".wav", ".mp3", ".flac", ".ogg", ".oga", ".m4a", ".aac", ".wma", ".opus"}
+    SUPPORTED_VIDEO = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".wmv", ".flv", ".mpeg", ".mpg"}
 
     def __init__(self, file_format: str):
         self.file_format = file_format
@@ -105,14 +85,6 @@ class FFmpegNotFoundError(AudioProcessingError):
             "FFmpeg не найден. Установите ffmpeg и добавьте в PATH. "
             "Инструкции: https://ffmpeg.org/download.html"
         )
-
-
-class FileNotFoundError(TranscriberError):
-    """Файл не найден."""
-
-    def __init__(self, file_path: str):
-        self.file_path = file_path
-        super().__init__(f"Файл не найден: {file_path}")
 
 
 class EmptyFileError(TranscriberError):

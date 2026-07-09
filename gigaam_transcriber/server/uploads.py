@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import unicodedata
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
@@ -16,15 +15,9 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from . import media
 from .auth import require_session
 from .repository import create_recording, new_id
+from .upload_stream import stream_to_disk
 
 router = APIRouter()
-
-_CHUNK = 1 << 20  # 1 МиБ
-
-
-def _participant_name(filename: str | None) -> str:
-    stem = Path(filename or "track").stem
-    return unicodedata.normalize("NFC", stem) or "track"
 
 
 @router.post("/api/uploads")
@@ -48,39 +41,33 @@ async def upload(
     upload_dir = Path(settings.data_dir) / "uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
 
-    saved: list[dict] = []
     total = 0
+
+    def _bump_total(delta: int) -> None:
+        nonlocal total
+        total += delta
+        if total > settings.max_recording_total:
+            raise HTTPException(413, "Запись превышает суммарный лимит")
+
+    saved: list[dict] = []
+    created: list[Path] = []  # все файлы прохода — для отката при ЛЮБОЙ ошибке
     try:
         for f in files:
             dest = upload_dir / f"{new_id()}{media.safe_suffix(f.filename)}"
-            size = 0
-            head = b""
-            with open(dest, "wb") as out:
-                while True:
-                    chunk = await f.read(_CHUNK)
-                    if not chunk:
-                        break
-                    if not head:
-                        head = chunk[:64]
-                    size += len(chunk)
-                    total += len(chunk)
-                    if size > settings.max_file_size:
-                        dest.unlink(missing_ok=True)
-                        raise HTTPException(413, "Файл превышает лимит размера")
-                    if total > settings.max_recording_total:
-                        dest.unlink(missing_ok=True)
-                        raise HTTPException(413, "Запись превышает суммарный лимит")
-                    out.write(chunk)
+            created.append(dest)
+            head, size = await stream_to_disk(
+                f, dest, max_size=settings.max_file_size, on_chunk=_bump_total
+            )
             if media.is_zip(head):
-                dest.unlink(missing_ok=True)
                 raise HTTPException(415, ".zip не принимается")
             if media.sniff_media(head) is None:
-                dest.unlink(missing_ok=True)
                 raise HTTPException(415, f"Неподдерживаемый формат: {f.filename!r}")
-            saved.append({"name": _participant_name(f.filename), "path": str(dest), "size": size})
-    except HTTPException:
-        for t in saved:  # откат уже сохранённых дорожек этой записи
-            Path(t["path"]).unlink(missing_ok=True)
+            saved.append(
+                {"name": media.nfc_label(f.filename, "track"), "path": str(dest), "size": size}
+            )
+    except Exception:  # HTTPException ИЛИ OSError (диск полон и т.п.) — не оставляем частичное
+        for p in created:
+            p.unlink(missing_ok=True)
         raise
 
     kind = "route_a" if len(saved) > 1 else "single"

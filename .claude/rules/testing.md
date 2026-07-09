@@ -15,7 +15,7 @@ paths:
   `app.state.yandex_factory`); для e2e — sync-enqueue (`process_job` вызывается сразу).
 - Пиши только в `tmp_path`/`temp_dir`; фейк-медиа — `path.write_bytes(b'\x00')`; реальный ffmpeg глуши
   monkeypatch `media.ffmpeg_available` + fake `downmix_tracks`.
-- После каждого шага гоняй весь набор `.venv/bin/python -m pytest` и держи зелёным (сейчас 333); новый код
+- После каждого шага гоняй весь набор `.venv/bin/python -m pytest` и держи зелёным; новый код
   — новые тесты, счётчик не уменьшается.
 - I1/кириллицу проверяй побайтно и на немутацию (`read_bytes()`/`read_text('utf-8')`, латиница-в-кириллице
   по word-boundary, вход `detect_quality_flags`/`fuse` не меняется).

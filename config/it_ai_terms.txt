@@ -1,0 +1,193 @@
+# config/it_ai_terms.txt — курируемый словарь канонических EN IT/AI-терминов для ПРАЙМИНГА L2.
+#
+# НАЗНАЧЕНИЕ: эти канонические написания подмешиваются в whisper initial_prompt «второго мнения»
+# (whisper_asr._build_context). Цель — чтобы L2 выдавал английские IT/AI-термины ПРАВИЛЬНОЙ
+# латиницей, а fusion слил их поверх ЛАТИНСКИХ манглов GigaAM.
+#
+# ЭТО НЕ ПРАВИЛА-ЗАМЕНЫ. В отличие от config/glossary.json (alias→canon, который переписывает текст),
+# этот файл лишь подсказка написания для L2. Поэтому:
+#   • I1 не затрагивается: verbatim-кириллица не меняется, fusion остаётся латиница-only;
+#   • риска кириллических манглов/гомографов (рак→RAG) НЕТ — здесь нет ключей-алиасов;
+#   • НЕ требует корпусных доказательств (в отличие от glossary-алиасов).
+# Кириллические транслитерации (GigaAM пишет термин кириллицей) этим НЕ чинятся — только латинские
+# манглы; кириллица→EN остаётся ручным, корпус-доказательным glossary-алиасом (precision-first).
+#
+# Формат: одна каноническая форма на строку; пустые строки и `#`-комментарии игнорируются; регистр
+# СОХРАНЯЕТСЯ (это канон). Дубликаты с канонами glossary.json безвредны (whisper-подсказка).
+#
+# ⚠️ ПОРЯДОК ВАЖЕН. whisper initial_prompt обрезается с НАЧАЛА (whisper_asr._prompt_text оставляет
+# хвост ~900 символов), а этот словарь идёт в контексте ПЕРВЫМ → выживает ХВОСТ файла. Поэтому
+# порядок: СВЕРХУ — частые/простые термины (whisper и так пишет их верно, не жалко обрезать),
+# СНИЗУ — самые ценные/редкие/неоднозначные (ядро AI/ML + имена продуктов/библиотек).
+
+# ===== верх: частые/простые (обрезаются первыми — whisper их и так знает) =====
+Python
+JavaScript
+TypeScript
+Go
+Rust
+JSON
+YAML
+XML
+SQL
+NoSQL
+regex
+API
+SDK
+CLI
+REST
+cache
+queue
+schema
+migration
+idempotent
+rate limit
+feature flag
+deploy
+deployment
+rollback
+commit
+merge
+rebase
+pull request
+code review
+refactoring
+linter
+unit test
+integration test
+repository
+staging
+production
+frontend
+backend
+endpoint
+dashboard
+roadmap
+sprint
+backlog
+retro
+standup
+stakeholder
+onboarding
+churn
+changelog
+MVP
+KPI
+OKR
+B2B
+B2C
+SaaS
+PaaS
+SLA
+SLO
+
+# ===== середина: инфраструктура / DevOps =====
+microservice
+container
+pod
+namespace
+ingress
+webhook
+load balancer
+CDN
+serverless
+Lambda
+observability
+tracing
+OAuth
+JWT
+gRPC
+GraphQL
+CI/CD
+pipeline
+GitHub
+GitLab
+Jenkins
+Vault
+Nginx
+Envoy
+Istio
+S3
+MinIO
+
+# ===== низ: самое ценное (попадает в хвост → в whisper-prompt) — продукты/библиотеки + ядро AI/ML =====
+Kafka
+RabbitMQ
+Redis
+PostgreSQL
+MongoDB
+ClickHouse
+Elasticsearch
+OpenSearch
+Prometheus
+Grafana
+Loki
+Kubernetes
+Docker
+Helm
+Terraform
+Ansible
+ArgoCD
+Karpenter
+GPT
+Claude
+Gemini
+Qwen
+Llama
+Mistral
+DeepSeek
+vLLM
+Ollama
+LangChain
+LangGraph
+LlamaIndex
+Hugging Face
+PyTorch
+TensorFlow
+ONNX
+CUDA
+TPU
+LLM
+RAG
+embedding
+embeddings
+transformer
+fine-tuning
+prompt
+prompting
+token
+tokenizer
+inference
+hallucination
+agent
+multi-agent
+context window
+RLHF
+LoRA
+quantization
+distillation
+dataset
+checkpoint
+vector
+vector database
+semantic search
+reranker
+chunking
+multimodal
+diarization
+ASR
+TTS
+NER
+OCR
+benchmark
+eval
+guardrails
+MCP
+function calling
+structured output
+LiteLLM
+Langfuse
+Z.ai
+Hermes
+OpenEvidence
+Friendli

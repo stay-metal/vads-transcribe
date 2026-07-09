@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api/client";
 import type { TrackRef } from "@/api/types";
-import { Button, Card, Input, SectionTitle, Spinner } from "@/components/ui";
+import { Button, Card, Input, Loading, SectionTitle } from "@/components/ui";
 import { IconTrash, IconUsers } from "@/components/icons";
 import { SPEAKER_COLORS } from "@/lib/utils";
 
@@ -41,11 +41,7 @@ export default function RouteAConfirm() {
         desc="Имена дорожек станут метками спикеров — точными и без диаризации. Поправьте, если нужно."
       />
 
-      {isLoading && (
-        <div className="flex items-center gap-2 text-sm text-ink-muted">
-          <Spinner className="h-4 w-4" /> Читаем дорожки…
-        </div>
-      )}
+      {isLoading && <Loading label="Читаем дорожки…" />}
 
       <Card className="divide-y divide-line/70 overflow-hidden">
         {tracks.map((t, i) => (

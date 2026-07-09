@@ -52,3 +52,32 @@ def test_resume_rejects_changed_file(tmp_path):
 
 def test_resume_missing_manifest(tmp_path):
     assert resume_result(tmp_path / "nope.json", tmp_path / "a.wav") is None
+
+
+def test_resume_rejects_changed_request_signature(tmp_path):
+    """Запрос с иным составом quality-слоёв (например, second_opinion=True) не должен
+    получать кэш, посчитанный без них."""
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"bytes")
+    mp = tmp_path / "m.json"
+    sig_without_l2 = {"second_opinion": False}
+    write_manifest(_result(), audio, mp, request=sig_without_l2)
+    assert resume_result(mp, audio, request=sig_without_l2) is not None
+    assert resume_result(mp, audio, request={"second_opinion": True}) is None
+    # Старый manifest без request инвалидируется, если сигнатура запрошена.
+    write_manifest(_result(), audio, mp)
+    assert resume_result(mp, audio, request=sig_without_l2) is None
+
+
+def test_resume_rejects_stale_layer_versions(tmp_path, monkeypatch):
+    """Бамп LAYER_VERSIONS инвалидирует кэш — иначе новая логика слоя не доедет
+    до прежних записей."""
+    import gigaam_transcriber.versions as versions_mod
+
+    audio = tmp_path / "a.wav"
+    audio.write_bytes(b"bytes")
+    mp = tmp_path / "m.json"
+    write_manifest(_result(), audio, mp)
+    assert resume_result(mp, audio) is not None
+    monkeypatch.setitem(versions_mod.LAYER_VERSIONS, "glossary", "test-bumped")
+    assert resume_result(mp, audio) is None

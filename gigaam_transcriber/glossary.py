@@ -22,7 +22,7 @@ import re
 from pathlib import Path
 
 from ._paths import config_dir
-from .data_models import TranscriptionSegment, merge_provenance
+from .data_models import TranscriptionSegment
 
 
 # Пути резолвятся в момент ВЫЗОВА (config_dir() читает GIGAAM_TRANSCRIBER_CONFIG лениво) —
@@ -72,14 +72,26 @@ def _people_text_safe(alias: str) -> bool:
     return not any(_CYR_INITIAL_RE.match(tok) for tok in alias.split())
 
 
-def alias_map(glossary: dict) -> dict[str, str]:
+def alias_map(glossary: dict, blocked_words: set[str] | None = None) -> dict[str, str]:
+    """Собрать карту alias→canon для текст-замены.
+
+    ``blocked_words`` (реальные ru/en слова) фильтрует ОДИНОЧНЫЕ people-алиасы,
+    совпадающие с нарицательным («вера», «роман») — иначе замена переписала бы
+    verbatim-кириллицу GigaAM (I1); term-алиасы так же фильтрует lint."""
+    blocked_words = blocked_words or set()
     m: dict[str, str] = {}
     for k, v in glossary.get("terms", {}).items():
         if not k.startswith("_"):
             m[k.lower()] = v
     for k, v in glossary.get("people", {}).items():
-        if not k.startswith("_") and _people_text_safe(k.lower()):
-            m[k.lower()] = v  # people побеждают при коллизии (кроме усечённых кир. инициалов)
+        if k.startswith("_"):
+            continue
+        a = k.lower()
+        if not _people_text_safe(a):
+            continue
+        if " " not in a and a in blocked_words:
+            continue  # имя-омоним нарицательного — не для текст-замены (I1)
+        m[a] = v  # people побеждают при коллизии (кроме отфильтрованных выше)
     return m
 
 
@@ -195,7 +207,8 @@ def load_runtime(strict: bool = False) -> tuple[dict[str, str], set[str]]:
     glossary = load_glossary()
     if not glossary:
         return {}, set()
-    violations = lint(glossary, load_ru_words(), load_en_words())
+    ru_words, en_words = load_ru_words(), load_en_words()
+    violations = lint(glossary, ru_words, en_words)
     if violations:
         if strict:
             raise GlossaryLintError(
@@ -204,7 +217,7 @@ def load_runtime(strict: bool = False) -> tuple[dict[str, str], set[str]]:
         terms = glossary.get("terms", {})
         for v in violations:
             terms.pop(v, None)  # выкинуть опасный алиас
-    return alias_map(glossary), suffixable_aliases(glossary)
+    return alias_map(glossary, blocked_words=ru_words | en_words), suffixable_aliases(glossary)
 
 
 def apply_to_segments(
@@ -222,10 +235,6 @@ def apply_to_segments(
     for seg in segments:
         new_text, n = apply_glossary(seg.text, amap, suffixable)
         if n:
-            seg.text = new_text
-            # Per-word тайминги устарели после замены текста — иначе seg.text/seg.words
-            # рассинхронизируются в JSON. Сброс: потребитель откатится на seg.text (to_dict).
-            seg.words = None
-            seg.provenance = merge_provenance(seg.provenance, "glossary")
+            seg.apply_text_edit(new_text, "glossary")
             total += n
     return total

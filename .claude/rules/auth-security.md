@@ -31,5 +31,7 @@ paths:
   пере-проверка + ранний `Content-Length`; чисти частичные при отказе.
 - Пути: NFC-нормализуй имена; раздачу ограничь `resolve()` + root in parents + запрет dotfile-сегментов;
   путь Я.Диска держи под `watch_dir` через `posixpath.normpath` (анти `..`).
-- Security-заголовки (CSP/HSTS/X-Frame-Options/nosniff/Referrer-Policy) — в nginx с `always` + дублируй
-  middleware через `setdefault`; `require_https` отвергает `X-Forwarded-Proto != https`.
+- Security-заголовки: статичные (HSTS/X-Frame-Options/nosniff/Referrer-Policy) — в nginx с `always`
+  (закрывают и 502/413 самого nginx) + дублируй middleware через `setdefault`; CSP — ТОЛЬКО в
+  app-middleware (nginx-дубль при дрейфе ужимал бы политику до пересечения и ломал wavesurfer);
+  `require_https` отвергает `X-Forwarded-Proto != https`.

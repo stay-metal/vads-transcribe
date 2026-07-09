@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import unicodedata
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -18,15 +17,11 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from . import media
 from .auth import require_session
 from .repository import new_id
+from .upload_stream import stream_to_disk
 
 router = APIRouter()
 
 _SAFE_GALLERY_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
-_CHUNK = 1 << 20  # 1 МиБ
-
-
-def _voice_label(filename: str | None) -> str:
-    return unicodedata.normalize("NFC", Path(filename or "voice").stem) or "voice"
 
 
 def _gallery_dir() -> Path:
@@ -79,30 +74,14 @@ async def create_gallery(
     upload_dir.mkdir(parents=True, exist_ok=True)
 
     tracks: dict[str, str] = {}
-    saved: list[Path] = []
     try:
         for f in files:
             dest = upload_dir / f"{new_id()}{media.safe_suffix(f.filename)}"
-            size = 0
-            head = b""
-            with open(dest, "wb") as out:
-                while True:
-                    chunk = await f.read(_CHUNK)
-                    if not chunk:
-                        break
-                    if not head:
-                        head = chunk[:64]
-                    size += len(chunk)
-                    if size > settings.max_file_size:
-                        raise HTTPException(413, "Образец превышает лимит размера")
-                    out.write(chunk)
+            head, _ = await stream_to_disk(f, dest, max_size=settings.max_file_size)
             if media.is_zip(head) or media.sniff_media(head) is None:
                 raise HTTPException(415, f"Неподдерживаемый формат: {f.filename!r}")
-            saved.append(dest)
-            tracks[_voice_label(f.filename)] = str(dest)  # метка коллапсит дубли имён
-    except HTTPException:
-        for p in saved:
-            p.unlink(missing_ok=True)
+            tracks[media.nfc_label(f.filename, "voice")] = str(dest)  # метка коллапсит дубли имён
+    except Exception:  # HTTPException ИЛИ OSError — чистим весь каталог образцов
         import shutil
 
         shutil.rmtree(upload_dir, ignore_errors=True)

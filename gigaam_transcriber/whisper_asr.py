@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import threading
@@ -24,15 +25,21 @@ from pathlib import Path
 
 import numpy as np
 
-from .data_models import TranscriptionResult, merge_provenance
+from ._paths import cache_dir
+from .data_models import TranscriptionResult
+from .utils import SAMPLE_RATE, load_waveform_16k_mono
 
-CACHE_DIR = Path(__file__).resolve().parents[1] / ".cache" / "local_whisper"
+logger = logging.getLogger(__name__)
 
 # Маленькая многоязычная модель (small int8 на CPU ≈ 1.2 ГБ, ~3с/30с-окно). Переопределяемо env.
 DEFAULT_MODEL = os.environ.get("GIGAAM_WHISPER_MODEL", "small").strip() or "small"
 _COMPUTE_TYPE = os.environ.get("GIGAAM_WHISPER_COMPUTE", "int8").strip() or "int8"
 _PROMPT_MAX_CHARS = 900
-_SAMPLE_RATE = 16000
+
+
+def _whisper_cache_dir() -> Path:
+    # Лениво (не на import-time): cache_dir() читает env в момент вызова.
+    return cache_dir() / "local_whisper"
 
 
 def _gate_min_logprob() -> float:
@@ -89,7 +96,7 @@ def _cache_path(audio_bytes: bytes, model: str, prompt: str = "", lang_hint: str
     h.update(b"\x00" + lang_hint.encode("utf-8"))
     if prompt:
         h.update(b"\x00" + prompt.encode("utf-8"))
-    return CACHE_DIR / f"{h.hexdigest()}.json"
+    return _whisper_cache_dir() / f"{h.hexdigest()}.json"
 
 
 def _assess_confidence(segs: list) -> bool:
@@ -151,7 +158,7 @@ def second_opinion(
     confident = _assess_confidence(segs)
 
     if text:  # пустое не кэшируем (отравило бы resume)
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache.parent.mkdir(parents=True, exist_ok=True)
         tmp = cache.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
         tmp.write_text(
             json.dumps({"text": text, "confident": confident}, ensure_ascii=False), encoding="utf-8"
@@ -168,20 +175,31 @@ def is_candidate(text: str) -> bool:
     return bool(_LATIN_RE.search(text or ""))
 
 
-def _build_context(alias_map: dict[str, str]) -> str:
-    """Подсказка-прайминг: канонические написания терминов/имён из глоссария."""
-    return " ".join(sorted({v for v in alias_map.values() if v}))
+def _load_priming_terms() -> list[str]:
+    """Курируемые канонические EN IT/AI-термины для прайминга (config/it_ai_terms.txt, опц.).
+
+    Это НЕ правила-замены (I1 не затрагивается): только подсказка написания для whisper.
+    Порядок файла важен — ``_prompt_text`` обрезает НАЧАЛО, поэтому ценные термины
+    держатся в хвосте файла (см. шапку it_ai_terms.txt)."""
+    from ._paths import config_dir
+
+    p = config_dir() / "it_ai_terms.txt"
+    if not p.exists():
+        return []
+    return [
+        line.strip()
+        for line in p.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
 
 
-def _load_waveform_16k_mono(audio_path) -> np.ndarray:
-    import torchaudio
+def _build_context(alias_map: dict[str, str], participants: tuple[str, ...] = ()) -> str:
+    """Подсказка-прайминг: IT-словарь + каноны глоссария + имена участников.
 
-    wav, sr = torchaudio.load(str(audio_path))
-    if sr != _SAMPLE_RATE:
-        wav = torchaudio.transforms.Resample(sr, _SAMPLE_RATE)(wav)
-    if wav.shape[0] > 1:
-        wav = wav.mean(dim=0, keepdim=True)
-    return wav[0].numpy().astype(np.float32)
+    ``_prompt_text`` оставляет ХВОСТ строки → самое ценное (каноны, участники) — в конец."""
+    canons = sorted({v for v in alias_map.values() if v})
+    parts = [p for p in participants if p]
+    return " ".join(_load_priming_terms() + canons + parts)
 
 
 def apply_second_opinion(
@@ -190,40 +208,67 @@ def apply_second_opinion(
     alias_map: dict[str, str] | None = None,
     *,
     model: str = DEFAULT_MODEL,
+    participants: tuple[str, ...] = (),
 ) -> int:
     """Перечитать сегменты-кандидаты (с латиницей) локальным Whisper и слить под I1.
 
     Возвращает число изменённых сегментов. Кириллица не трогается (fusion меняет лишь
     латиницу/числа). Уверенные прочтения сливаются, неуверенные → GigaAM (precision-first).
-    На изменённых сегментах provenance → 'second-opinion'."""
+    На изменённых сегментах provenance → 'second-opinion'. Счётчики прохода —
+    в ``result.metadata['second_opinion']``."""
     from .fusion import fuse_with_corrections
 
     alias_map = alias_map or {}
     candidates = [s for s in result.segments if is_candidate(s.text)]
     if not candidates:
         return 0
-    waveform = _load_waveform_16k_mono(audio_path)
-    context = _build_context(alias_map)
+    waveform = load_waveform_16k_mono(audio_path)
+    context = _build_context(alias_map, participants)
     changed = 0
+    skipped_low_confidence = 0
+    failed = 0
     all_corrections = []
+    consecutive_failures = 0
     for seg in candidates:
-        a = waveform[int(seg.start * _SAMPLE_RATE) : int(seg.end * _SAMPLE_RATE)]
+        a = waveform[int(seg.start * SAMPLE_RATE) : int(seg.end * SAMPLE_RATE)]
         if a.size == 0:
             continue
-        res = second_opinion(a, model=model, context=context)
-        if not res["confident"] or not res["text"]:
+        # Изоляция per-segment: сбой декода/fusion одного сегмента (битый кусок волны,
+        # кэш на read-only ФС) не должен отменять L2 для остальных.
+        try:
+            res = second_opinion(a, model=model, context=context)
+            if not res["confident"] or not res["text"]:
+                skipped_low_confidence += 1
+                consecutive_failures = 0
+                continue
+            new_text, corrections = fuse_with_corrections(seg.text, res["text"], alias_map)
+        except Exception as e:
+            failed += 1
+            consecutive_failures += 1
+            logger.warning("L2 пропущен для сегмента %.2f-%.2f: %r", seg.start, seg.end, e)
+            # Систематический сбой (модель не грузится: нет сети/HF Hub) — не долбим
+            # каждый кандидат сетевым таймаутом, сдаёмся на весь проход.
+            if consecutive_failures >= 3:
+                logger.warning(
+                    "L2 прерван: %d сбоев подряд (модель недоступна?)", consecutive_failures
+                )
+                break
             continue
-        new_text, corrections = fuse_with_corrections(seg.text, res["text"], alias_map)
+        consecutive_failures = 0
         if new_text != seg.text:
-            seg.text = new_text
-            # Per-word тайминги устарели после fusion — сброс, чтобы seg.words не
-            # противоречил seg.text в JSON (потребитель откатится на seg.text).
-            seg.words = None
-            seg.provenance = merge_provenance(seg.provenance, "second-opinion")
+            seg.apply_text_edit(new_text, "second-opinion")
             changed += 1
         all_corrections.extend(corrections)
+    # Счётчики прохода — диагностика полноты L2 (сколько кандидатов реально перечитано).
+    stats = {"candidates": len(candidates), "changed": changed}
+    if skipped_low_confidence:
+        stats["skipped_low_confidence"] = skipped_low_confidence
+    if failed:
+        stats["failed"] = failed
+    result.metadata["second_opinion"] = stats
     # Самообучение глоссария (#20): копим устойчивые латиница-правки в лог; offline
-    # harvest_log сворачивает частые (count>=3) в кандидаты-terms под lint (ручная курация).
+    # harvest (dialogscribe glossary harvest) сворачивает частые (count>=3) в
+    # кандидаты-terms под lint (ручная курация).
     if all_corrections:
         try:
             from .glossary_grow import log_corrections

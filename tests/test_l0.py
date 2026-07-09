@@ -3,7 +3,7 @@
 import json
 
 from gigaam_transcriber.data_models import TranscriptionResult, TranscriptionSegment
-from gigaam_transcriber.l0 import build_l0, l0_sha256, render_md_from_l0, write_l0
+from gigaam_transcriber.l0 import build_l0, l0_sha256, write_l0
 
 
 def _result(segs, source="/path/Дейли.m4a"):
@@ -81,10 +81,10 @@ def test_sha256_deterministic_and_sensitive():
     assert l0_sha256(build_l0(r1)) != l0_sha256(build_l0(r3))
 
 
-def test_render_md_preserves_text_i1():
+def test_build_l0_preserves_text_i1():
     r = _result([TranscriptionSegment(text="кириллица verbatim", start=0, end=1, speaker="S")])
-    md = render_md_from_l0(build_l0(r))
-    assert "кириллица verbatim" in md and "**S:**" in md
+    recs = build_l0(r)
+    assert recs[0]["text"] == "кириллица verbatim" and recs[0]["speaker"] == "S"
 
 
 def test_write_l0_jsonl_and_sidecar(tmp_path):

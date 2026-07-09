@@ -3,7 +3,6 @@
 - `POST /api/auth/login` — bcrypt + constant-time, ставит подписанную cookie.
 - `POST /api/auth/logout` — гасит cookie.
 - `GET  /api/auth/me` — текущий пользователь (требует сессию).
-- `GET  /api/echo` — защищённый echo (демонстрация require_session, DoD M2).
 - `require_session` — FastAPI-зависимость: 401 без валидной свежей сессии.
 
 Brute-force: глобальный + per-IP счётчики неудач с временным локаутом (`LoginThrottle`),
@@ -187,9 +186,3 @@ def logout(response: Response) -> dict:
 @router.get("/api/auth/me")
 def me(user: str = Depends(require_session)) -> dict:
     return {"user": user}
-
-
-@router.get("/api/echo")
-def echo(msg: str = "pong", user: str = Depends(require_session)) -> dict:
-    """Защищённый echo — доступен только с валидной сессией (DoD M2)."""
-    return {"echo": msg, "user": user}
